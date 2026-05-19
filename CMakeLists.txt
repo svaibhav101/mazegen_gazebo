@@ -7,3 +7,18 @@ project(mazegen_ign_gazebo
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+
+# -----------------
+# Unit tests
+# -----------------
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(test_maze_parser
+    test/test_maze_parser.cpp
+    src/maze_parse.cpp)
+  target_include_directories(test_maze_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME maze_parser COMMAND test_maze_parser)
+endif()
