@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cmath>
 
 #include <ignition/common/Console.hh>
 #include <ignition/common/SystemPaths.hh>
@@ -298,5 +299,81 @@ namespace mazegen_plugin
       return s.str();
     }
 
-  } // mazegenPlugin::Configure
+
+    /// \brief World-frame centre of a maze cell.
+    ///
+    /// Matches BuildMazeSdf's placement: the bottom-left corner sits at
+    /// `<origin>` with no yaw, so a cell centre is offset from the origin by
+    /// `(col + 0.5, row + 0.5)` cell widths.
+    /// \param[in] _col,_row Cell indices.
+    /// \param[in] _p Geometry parameters and placement origin.
+    /// \return The cell centre in world coordinates.
+    ignition::math::Vector3d CellCenter(int _col, int _row, const Params &_p)
+    {
+      return {_p.origin.X() + (_col + 0.5) * _p.cellSize,
+              _p.origin.Y() + (_row + 0.5) * _p.cellSize,
+              _p.origin.Z()};
+    }
+
+    /// \brief Log start/goal coordinates and a suggested mouse spawn pose.
+    ///
+    /// The mouse is placed at the start cell facing its single open side
+    /// (the start is walled on the other three). Yaw is in world-frame
+    /// radians, with +X (east) = 0 and +Y (north) = +pi/2.
+    /// \param[in] _m Parsed maze.
+    /// \param[in] _p Geometry parameters and placement origin.
+    void LogSpawnInfo(const Maze &_m, const Params &_p)
+    {
+      const auto start = CellCenter(_m.startCol, _m.startRow, _p);
+      ignmsg << "==> mazegenPlugin: start cell (col " << _m.startCol << ", row "
+             << _m.startRow << ") at world x=" << start.X()
+             << " y=" << start.Y() << " z=" << start.Z() << std::endl;
+
+      for (std::size_t i = 0; i < _m.goalCells.size(); ++i)
+      {
+        const auto g = CellCenter(_m.goalCells[i].first,
+                                  _m.goalCells[i].second, _p);
+        ignmsg << "==> mazegenPlugin: goal cell " << i << " (col "
+               << _m.goalCells[i].first << ", row " << _m.goalCells[i].second
+               << ") at world x=" << g.X() << " y=" << g.Y()
+               << " z=" << g.Z() << std::endl;
+      }
+
+      // Edges of the start cell. hWall[c][r] is the wall on the SOUTH edge of
+      // cell (c,r); hWall[c][r+1] the NORTH edge. vWall[c][r] is the WEST edge;
+      // vWall[c+1][r] the EAST edge.
+      const int c = _m.startCol;
+      const int r = _m.startRow;
+      const bool wallN = _m.hWall[c][r + 1];
+      const bool wallS = _m.hWall[c][r];
+      const bool wallW = _m.vWall[c][r];
+      const bool wallE = _m.vWall[c + 1][r];
+
+      std::string dir;
+      double yaw = 0.0;
+      if (!wallE)      { dir = "east (+X)";  yaw = 0.0; }
+      else if (!wallN) { dir = "north (+Y)"; yaw = 1.5707963267948966; }
+      else if (!wallW) { dir = "west (-X)";  yaw = 3.1415926535897931; }
+      else if (!wallS) { dir = "south (-Y)"; yaw = -1.5707963267948966; }
+      else
+      {
+        ignwarn << "mazegenPlugin: start cell is walled on all four sides; "
+                   "defaulting mouse yaw to 0." << std::endl;
+        dir = "none (fully enclosed)";
+      }
+
+      ignmsg << "==> mazegenPlugin: spawn mouse at x=" << start.X() << " y="
+             << start.Y() << " z=" << start.Z() << " yaw=" << yaw
+             << " rad (facing " << dir << ", the open side of the start cell)"
+             << std::endl;
+      ignmsg << "==> mazegenPlugin: cell_size=" << _p.cellSize << " m, maze spans "
+             << "x=[" << _p.origin.X() << ", "
+             << _p.origin.X() + _m.cols * _p.cellSize << "] y=["
+             << _p.origin.Y() << ", "
+             << _p.origin.Y() + _m.rows * _p.cellSize << "] (first quadrant, "
+             << "bottom-left corner at origin)" << std::endl;
+    }
+  } // namespace: anonymous
+
+
 } // namespace mazegen_plugin
