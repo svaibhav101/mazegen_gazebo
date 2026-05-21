@@ -303,8 +303,8 @@ namespace mazegen_plugin
     /// \brief World-frame centre of a maze cell.
     ///
     /// Matches BuildMazeSdf's placement: the bottom-left corner sits at
-    /// `<origin>` with no yaw, so a cell centre is offset from the origin by
-    /// `(col + 0.5, row + 0.5)` cell widths.
+    /// '<origin>' with no yaw, so a cell centre is offset from the origin by
+    /// '(col + 0.5, row + 0.5)' cell widths.
     /// \param[in] _col,_row Cell indices.
     /// \param[in] _p Geometry parameters and placement origin.
     /// \return The cell centre in world coordinates.
@@ -375,5 +375,117 @@ namespace mazegen_plugin
     }
   } // namespace: anonymous
 
+
+  void mazegenPlugin::Configure(
+      const ignition::gazebo::Entity &_entity,
+      const std::shared_ptr<const sdf::Element> &_sdf,
+      ignition::gazebo::EntityComponentManager &_ecm,
+      ignition::gazebo::EventManager &_eventMgr)
+  {
+    // Verify we were attached to a world.
+    if (!_ecm.Component<ignition::gazebo::components::World>(_entity))
+    {
+      ignerr << "mazegenPlugin must be attached to a <world>." << std::endl;
+      return;
+    }
+
+    Params p;
+    if (!_sdf->HasElement("maze_file"))
+    {
+      ignerr << "mazegenPlugin: <maze_file> is required." << std::endl;
+      return;
+    }
+    p.mazeFile = _sdf->Get<std::string>("maze_file");
+    p.cellSize = GetDouble(_sdf, "cell_size", p.cellSize);
+    p.wallThickness = GetDouble(_sdf, "wall_thickness", p.wallThickness);
+    p.wallHeight = GetDouble(_sdf, "wall_height", p.wallHeight);
+    p.postSize = GetDouble(_sdf, "post_size", p.wallThickness);
+    if (_sdf->HasElement("origin"))
+      p.origin = _sdf->Get<ignition::math::Vector3d>("origin");
+
+    const std::string resolved = ResolveMazePath(p.mazeFile);
+    Maze maze;
+    try
+    {
+      maze = ParseMazeFile(resolved);
+    }
+    catch (const std::exception &e)
+    {
+      ignerr << "mazegenPlugin: " << e.what() << std::endl;
+      return;
+    }
+
+    ignmsg << "==> mazegenPlugin: loaded " << maze.cols << "x" << maze.rows
+           << " maze from '" << resolved << "'" << std::endl;
+
+    LogSpawnInfo(maze, p);
+
+    const std::string sdfStr = BuildMazeSdf(maze, p);
+
+    // Spawn via the world's /create service rather than SdfEntityCreator.
+    // This routes the model through UserCommands so that the GUI scene
+    // receives the full set of components.
+    const auto *nameComp =
+        _ecm.Component<ignition::gazebo::components::Name>(_entity);
+    if (!nameComp)
+    {
+      ignerr << "mazegenPlugin: world has no Name component." << std::endl;
+      return;
+    }
+    const std::string service = "/world/" + nameComp->Data() + "/create";
+
+    // Write the generated SDF to a temp file and pass the filename via
+    // EntityFactory. This goes through the same loader the world uses
+    // for <include> directives, which reliably preserves visual
+    // materials (the inline-string form drops them under ogre2).
+    //
+    // The filename mixes the PID with a process-wide counter so that
+    // declaring the plugin multiple times in one world (e.g. several
+    // mazes at different origins) doesn't make two instances clobber a
+    // shared temp file before their detached threads read it.
+    static std::atomic<unsigned> tmpCounter{0};
+    auto tmpPath = std::filesystem::temp_directory_path() /
+                   ("mazegen_plugin_" + std::to_string(::getpid()) + "_" +
+                    std::to_string(tmpCounter++) + ".sdf");
+    {
+      std::ofstream f(tmpPath);
+      if (!f)
+      {
+        ignerr << "mazegenPlugin: cannot write " << tmpPath << std::endl;
+        return;
+      }
+      f << sdfStr;
+    }
+
+    // The service isn't reachable until after Configure() returns, so we
+    // dispatch the request on a detached thread with a brief wait.
+    const std::string sdfFile = tmpPath.string();
+    std::thread([service, sdfFile]()
+                {
+    ignition::transport::Node node;
+    ignition::msgs::EntityFactory req;
+    req.set_sdf_filename(sdfFile);
+    ignition::msgs::Boolean rep;
+    bool ok = false;
+    std::error_code ec;
+    for (int attempt = 0; attempt < 20; ++attempt)
+    {
+      if (node.Request(service, req, 2000, rep, ok) && ok && rep.data())
+      {
+        // The service replies as soon as the create command is *queued*;
+        // UserCommands doesn't open the SDF file until it processes the
+        // command on a later ECM update. Deleting immediately races that
+        // read and yields "Unable to read file". Give the server time to
+        // consume the file before removing it.
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        std::filesystem::remove(sdfFile, ec);
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    std::filesystem::remove(sdfFile, ec);
+    ignerr << "mazegenPlugin: failed to call " << service << std::endl; })
+        .detach();
+  }
 
 } // namespace mazegen_plugin
