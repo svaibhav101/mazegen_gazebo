@@ -41,6 +41,28 @@ install(TARGETS gazebo_mazegen_plugin
   LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
 
+# ------------------------------------------
+# Doxygen
+#
+# build : cmake --build build --target doc
+# Output: build/docs/html/index.html.
+# ------------------------------------------
+find_package(Doxygen)
+if(DOXYGEN_FOUND)
+  set(DOXYGEN_IN  ${CMAKE_CURRENT_SOURCE_DIR}/documentation/Doxyfile)
+  set(DOXYGEN_OUT ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile)
+  configure_file(${DOXYGEN_IN} ${DOXYGEN_OUT} @ONLY)
+
+  add_custom_target(doc
+    COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_OUT}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Generating API documentation with Doxygen"
+    VERBATIM)
+else()
+  message(STATUS "Doxygen not found - 'doc' target disabled")
+endif()
+
+
 # -----------------
 # Unit tests
 # -----------------
