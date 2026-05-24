@@ -22,6 +22,14 @@ the maze is a 16 x 16 array of 180 mm unit squares, walls are 50 mm
 high and 12 mm thick with white sides and red tops, lattice posts are
 12 x 12 x 50 mm, and the example world's floor is non-gloss black.
 
+## Gallery
+
+Bundled mazes rendered in Ignition Fortress (green = start cell, red = goal):
+
+| `mazes/alljapan-001-1980.txt` | `mazes/allamerica2013.txt` |
+|---|---|
+| ![All-Japan 1980 maze](./documentation/images/alljapan-001-1980.png)| ![All-America 2013 maze](./documentation/images/allamerica2013.png)|
+
 ---
 
 ## 1. Maze file format
@@ -174,13 +182,6 @@ export IGN_GAZEBO_RESOURCE_PATH=/path/to/gazeboMaze:$IGN_GAZEBO_RESOURCE_PATH
 
 (Absolute paths in `<maze_file>` work regardless of `IGN_GAZEBO_RESOURCE_PATH`.)
 
-### 4c. Verify the plugin is found
-
-```bash
-ign gazebo --list-plugins 2>&1 | grep -i maze
-# or simply run any world that uses it; missing plugins print
-#   "[Err] [SystemLoader.cc] Failed to load system plugin..."
-```
 
 ---
 
