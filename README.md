@@ -277,4 +277,4 @@ This project drew inspiration from previous work within the Micromouse and Gazeb
 
 ## License
 
-`mazegen_ign_gazebo` is made available under the MIT License. For more details, see [LICENSE](./LICENSE)
+`mazegen_ign_gazebo` is made available under the Apache License 2.0. For more details, see [LICENSE](./LICENSE)
