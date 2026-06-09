@@ -1,0 +1,35 @@
+services:
+  mazegen:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: mazegen-ign-gazebo
+    # Pass a custom maze file as the first argument, e.g.:
+    #   docker compose run mazegen mazes/alljapan-001-1980.txt
+    # Omit the argument (or use `docker compose up`) to use the default maze.
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      # Uncomment to mount a custom maze file from the host:
+      # - ./my_maze.txt:/workspace/mazes/my_maze.txt
+    network_mode: host
+
+    #########################################################
+    # GPU — uncomment the block that matches your hardware. #
+    #########################################################
+
+    ## Intel / AMD:
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - video
+    
+    ## NVIDIA (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

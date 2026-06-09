@@ -1,0 +1,6 @@
+build/
+.git/
+documentation/
+README*.md
+LICENSE
+*.backup

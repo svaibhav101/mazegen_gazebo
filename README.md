@@ -62,7 +62,42 @@ is column 0.
 
 ---
 
-## 2. Build
+## 2. Docker (recommended)
+
+The fastest way to run the project: no host dependencies beyond Docker and an X server.
+Full details are in **[docker/README.md](./docker/README.md)**; the essentials are below.
+
+### Build
+
+```bash
+# from repo root
+docker build -f docker/Dockerfile -t mazegen-ign-gazebo .
+```
+
+### Run (default maze)
+
+```bash
+xhost +local:docker
+docker compose -f docker/docker-compose.yml up
+```
+
+### Run (custom maze)
+
+```bash
+xhost +local:docker
+docker run --rm \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v /path/to/your/maze.txt:/workspace/mazes/custom.txt \
+  mazegen-ign-gazebo mazes/custom.txt
+```
+
+GPU options (Intel/AMD `--device /dev/dri --group-add video`, NVIDIA `--gpus all`)
+and Compose-based custom-maze mounting are covered in [docker/README.md](./docker/README.md).
+
+---
+
+## 3. Build from source
 
 System prerequisites (Ubuntu 20.04 / 22.04 with Fortress installed):
 
@@ -106,7 +141,7 @@ cmake --build build --target doc
 
 ---
 
-## 3. Run the bundled example (no install)
+## 4. Run the bundled example (no install)
 
 From the repo root, source the helper that exports the two search paths:
 
@@ -134,7 +169,7 @@ physics / scene-broadcaster stack:
 
 ---
 
-## 4. Install system-wide (use from any world)
+## 5. Install system-wide (use from any world)
 
 To use the plugin from your own world files without setting
 `IGN_GAZEBO_SYSTEM_PLUGIN_PATH` every time, install the library.
@@ -185,7 +220,7 @@ export IGN_GAZEBO_RESOURCE_PATH=/path/to/gazeboMaze:$IGN_GAZEBO_RESOURCE_PATH
 
 ---
 
-## 5. Using `mazegenPlugin` in your own world
+## 6. Using `mazegenPlugin` in your own world
 
 Drop this `<plugin>` block inside any `<world>` element. **No other
 changes** to your world are required - your existing physics, lights,
@@ -234,19 +269,26 @@ robots, and models continue to work normally.
 
 ---
 
-## 6. Repository layout
+## 7. Repository layout
 
 ```bash
 .
 ├── build                          # CMake build tree (generated; .so + tests)
 ├── CMakeLists.txt                 # CMake configuration
+├── .dockerignore                  # excludes build/, .git/, docs from Docker context
+├── docker
+│   ├── Dockerfile                 # container image (Ubuntu 22.04 + Ignition Fortress)
+│   ├── docker-compose.yml         # convenience Compose wrapper
+│   ├── entrypoint.sh              # runtime script: patch maze path, launch ign gazebo
+│   └── README.md                  # Docker-specific usage guide
 ├── documentation
-│   └── Doxyfile                   # Doxygen config 
+│   └── Doxyfile                   # Doxygen config
 ├── include
 │   ├── gazebo_mazegen_plugin.h    # public plugin class (mazegen_plugin::mazegenPlugin)
 │   └── maze_parse.h               # Maze struct + ParseMazeFile() declaration
 ├── mazes                          # bundled micromouseonline-format competition mazes
-├── README.md                      
+├── README.md
+├── setup.bash                     # sets IGN_GAZEBO_SYSTEM_PLUGIN_PATH + RESOURCE_PATH
 ├── src
 │   ├── gazebo_mazegen_plugin.cpp  # plugin: parse maze, build SDF, spawn via /create
 │   └── maze_parse.cpp             # maze-file parser implementation
@@ -258,7 +300,7 @@ robots, and models continue to work normally.
 
 ---
 
-## 7. References & acknowledgements
+## 8. References & acknowledgements
 This project drew inspiration from previous work within the Micromouse and Gazebo communities:
 
 * **[micromouseonline/mazefiles](https://github.com/micromouseonline/mazefiles)**
