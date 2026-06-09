@@ -9,7 +9,7 @@
 /// \file maze_parse.h
 /// \brief Parser for micromouseonline-format maze text files.
 
-namespace mazegen_plugin
+namespace mazegen
 {
 /// \brief A maze parsed from the micromouseonline text format.
 ///
@@ -53,6 +53,6 @@ struct Maze
 /// \return The parsed maze, with walls, start, and goal cells populated.
 /// \throws std::runtime_error if the file cannot be opened or is malformed.
 Maze ParseMazeFile(const std::string &_path);
-}  // namespace mazegen_plugin
+}  // namespace mazegen
 
 #endif

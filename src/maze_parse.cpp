@@ -4,7 +4,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace mazegen_plugin
+namespace mazegen
 {
   namespace
   {
@@ -149,4 +149,4 @@ namespace mazegen_plugin
 
     return m;
   }
-} // namespace mazegen_plugin
+} // namespace mazegen

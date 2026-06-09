@@ -7,7 +7,7 @@ and source files describe *what* each piece does - read those first.
 
 ```
                 +-----------------------------+
-   SDF world -->|     mazegenPlugin (plugin)  |--> /world/<name>/create
+   SDF world -->|     MazegenPlugin (plugin)   |--> /world/<name>/create
                 |   (ISystemConfigure only)   |     (Ignition Transport)
                 +--------------+--------------+
                                |
@@ -26,9 +26,9 @@ and source files describe *what* each piece does - read those first.
                 +-----------------------------+
 ```
 
-Only `mazegenPlugin` is exposed as a plugin symbol. The parser and the
+Only `MazegenPlugin` is exposed as a plugin symbol. The parser and the
 SDF builder are internal - the builder lives in an anonymous namespace
-inside `gazebo_mazegen_plugin.cpp`, the parser sits behind `ParseMazeFile()` so
+inside `mazegen_plugin.cpp`, the parser sits behind `ParseMazeFile()` so
 it can be unit-tested without bringing in any Ignition headers.
 
 ## Coordinate conventions
@@ -60,7 +60,7 @@ component set.
 The plugin therefore:
 
 1. Writes the generated SDF to a temp file in the system temp directory
-   (`mazegen_plugin_<pid>_<counter>.sdf` - the counter lets several plugin
+   (`mazegen_<pid>_<counter>.sdf` - the counter lets several plugin
    instances in one world avoid clobbering each other's file).
 2. Spawns a detached thread that retries the create service (up to 20
    attempts, 250 ms apart) - the service isn't reachable until after

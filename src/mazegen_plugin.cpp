@@ -1,4 +1,4 @@
-#include "gazebo_mazegen_plugin.h"
+#include "mazegen_plugin.h"
 #include "maze_parse.h"
 
 #include <filesystem>
@@ -28,13 +28,13 @@
 
 
 IGNITION_ADD_PLUGIN(
-  mazegen_plugin::mazegenPlugin,
+  mazegen::MazegenPlugin,
   ignition::gazebo::System,
-  mazegen_plugin::mazegenPlugin::ISystemConfigure,
-  mazegen_plugin::mazegenPlugin::ISystemPreUpdate
+  mazegen::MazegenPlugin::ISystemConfigure,
+  mazegen::MazegenPlugin::ISystemPreUpdate
 )
 
-namespace mazegen_plugin
+namespace mazegen
 {
   namespace
   {
@@ -315,7 +315,7 @@ namespace mazegen_plugin
     void LogSpawnInfo(const Maze &_m, const Params &_p)
     {
       const auto start = CellCenter(_m.startCol, _m.startRow, _p);
-      ignmsg << "==> mazegenPlugin: start cell (col " << _m.startCol << ", row "
+      ignmsg << "==> MazegenPlugin: start cell (col " << _m.startCol << ", row "
              << _m.startRow << ") at world x=" << start.X()
              << " y=" << start.Y() << " z=" << start.Z() << std::endl;
 
@@ -323,7 +323,7 @@ namespace mazegen_plugin
       {
         const auto g = CellCenter(_m.goalCells[i].first,
                                   _m.goalCells[i].second, _p);
-        ignmsg << "==> mazegenPlugin: goal cell " << i << " (col "
+        ignmsg << "==> MazegenPlugin: goal cell " << i << " (col "
                << _m.goalCells[i].first << ", row " << _m.goalCells[i].second
                << ") at world x=" << g.X() << " y=" << g.Y()
                << " z=" << g.Z() << std::endl;
@@ -343,16 +343,16 @@ namespace mazegen_plugin
       else if (!wallS) { dir = "south (-Y)"; yaw = -1.5707963267948966; }
       else
       {
-        ignwarn << "mazegenPlugin: start cell is walled on all four sides; "
+        ignwarn << "MazegenPlugin: start cell is walled on all four sides; "
                    "defaulting mouse yaw to 0." << std::endl;
         dir = "none (fully enclosed)";
       }
 
-      ignmsg << "==> mazegenPlugin: spawn mouse at x=" << start.X() << " y="
+      ignmsg << "==> MazegenPlugin: spawn mouse at x=" << start.X() << " y="
              << start.Y() << " z=" << start.Z() << " yaw=" << yaw
              << " rad (facing " << dir << ", the open side of the start cell)"
              << std::endl;
-      ignmsg << "==> mazegenPlugin: cell_size=" << _p.cellSize
+      ignmsg << "==> MazegenPlugin: cell_size=" << _p.cellSize
              << " m, maze spans x=[" << _p.origin.X() << ", "
              << _p.origin.X() + _m.cols * _p.cellSize << "] y=["
              << _p.origin.Y() << ", "
@@ -368,7 +368,7 @@ namespace mazegen_plugin
   // The actual /create service call is deferred to PreUpdate() because the
   // transport graph isn't fully connected until Configure() returns.
   // -------------------------------------------------------------------------
-  void mazegenPlugin::Configure(
+  void MazegenPlugin::Configure(
       const ignition::gazebo::Entity &_entity,
       const std::shared_ptr<const sdf::Element> &_sdf,
       ignition::gazebo::EntityComponentManager &_ecm,
@@ -376,14 +376,14 @@ namespace mazegen_plugin
   {
     if (!_ecm.Component<ignition::gazebo::components::World>(_entity))
     {
-      ignerr << "mazegenPlugin must be attached to a <world>." << std::endl;
+      ignerr << "MazegenPlugin must be attached to a <world>." << std::endl;
       return;
     }
 
     Params p;
     if (!_sdf->HasElement("maze_file"))
     {
-      ignerr << "mazegenPlugin: <maze_file> is required." << std::endl;
+      ignerr << "MazegenPlugin: <maze_file> is required." << std::endl;
       return;
     }
     p.mazeFile       = _sdf->Get<std::string>("maze_file");
@@ -403,11 +403,11 @@ namespace mazegen_plugin
     }
     catch (const std::exception &e)
     {
-      ignerr << "mazegenPlugin: " << e.what() << std::endl;
+      ignerr << "MazegenPlugin: " << e.what() << std::endl;
       return;
     }
 
-    ignmsg << "==> mazegenPlugin: loaded " << maze.cols << "x" << maze.rows
+    ignmsg << "==> MazegenPlugin: loaded " << maze.cols << "x" << maze.rows
            << " maze from '" << resolved << "'" << std::endl;
     LogSpawnInfo(maze, p);
 
@@ -419,13 +419,13 @@ namespace mazegen_plugin
     // times in one world (several mazes at different origins).
     static std::atomic<unsigned> tmpCounter{0};
     auto tmpPath = std::filesystem::temp_directory_path() /
-                   ("mazegen_plugin_" + std::to_string(::getpid()) + "_" +
+                   ("mazegen_" + std::to_string(::getpid()) + "_" +
                     std::to_string(tmpCounter++) + ".sdf");
     {
       std::ofstream f(tmpPath);
       if (!f)
       {
-        ignerr << "mazegenPlugin: cannot write " << tmpPath << std::endl;
+        ignerr << "MazegenPlugin: cannot write " << tmpPath << std::endl;
         return;
       }
       f << sdfStr;
@@ -438,7 +438,7 @@ namespace mazegen_plugin
         _ecm.Component<ignition::gazebo::components::Name>(_entity);
     if (!nameComp)
     {
-      ignerr << "mazegenPlugin: world has no Name component." << std::endl;
+      ignerr << "MazegenPlugin: world has no Name component." << std::endl;
       return;
     }
     createService_ = "/world/" + nameComp->Data() + "/create";
@@ -457,7 +457,7 @@ namespace mazegen_plugin
   //   named "maze". Once it appears, UserCommands has finished reading the
   //   file and it is safe to delete.
   // -------------------------------------------------------------------------
-  void mazegenPlugin::PreUpdate(
+  void MazegenPlugin::PreUpdate(
       const ignition::gazebo::UpdateInfo & /*_info*/,
       ignition::gazebo::EntityComponentManager &_ecm)
   {
@@ -475,7 +475,7 @@ namespace mazegen_plugin
       const bool called = node.Request(createService_, req, 5000, rep, ok);
       if (!called || !ok || !rep.data())
       {
-        ignerr << "mazegenPlugin: /create service call failed on '"
+        ignerr << "MazegenPlugin: /create service call failed on '"
                << createService_ << "'" << std::endl;
         // Clean up and give up: no point polling if the request never landed.
         std::error_code ec;
@@ -511,4 +511,4 @@ namespace mazegen_plugin
     }
   }
 
-} // namespace mazegen_plugin
+} // namespace mazegen
