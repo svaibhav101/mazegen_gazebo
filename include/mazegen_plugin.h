@@ -1,25 +1,25 @@
-#ifndef GAZEBO_MAZEGEN_PLUGIN_H_
-#define GAZEBO_MAZEGEN_PLUGIN_H_
+#ifndef MAZEGEN_PLUGIN_H_
+#define MAZEGEN_PLUGIN_H_
 
 #include <string>
 
 #include <ignition/gazebo/System.hh>
 #include <sdf/Element.hh>
 
-/// \file gazebo_mazegen_plugin.h
-/// \brief Public header for the `mazegenPlugin` Ignition Gazebo plugin.
+/// \file mazegen_plugin.h
+/// \brief Public header for the `MazegenPlugin` Ignition Gazebo plugin.
 
-/// \namespace mazegen_plugin
-/// \brief All public symbols exposed by the gazeboMaze plugin.
-namespace mazegen_plugin
+/// \namespace mazegen
+/// \brief All public symbols exposed by the mazegen plugin.
+namespace mazegen
 {
   /// \brief World system plugin for Ignition Gazebo Fortress that builds a
   /// micromouse-style maze from a text file (micromouseonline format).
   ///
   /// Example SDF usage:
   /// \code
-  /// <plugin filename="libgazebo_mazegen_plugin.so"
-  ///         name="mazegen_plugin::mazegenPlugin">
+  /// <plugin filename="libmazegen_plugin.so"
+  ///         name="mazegen::MazegenPlugin">
   ///   <maze_file>mazes/japan2007ef.txt</maze_file>
   ///   <cell_size>0.18</cell_size>
   ///   <wall_thickness>0.012</wall_thickness>
@@ -29,14 +29,14 @@ namespace mazegen_plugin
   ///   <origin>0 0 0</origin>
   /// </plugin>
   /// \endcode
-  class mazegenPlugin
+  class MazegenPlugin
       : public ignition::gazebo::System,
         public ignition::gazebo::ISystemConfigure,
         public ignition::gazebo::ISystemPreUpdate
   {
   public:
-    mazegenPlugin() = default;
-    ~mazegenPlugin() override = default;
+    MazegenPlugin() = default;
+    ~MazegenPlugin() override = default;
 
     void Configure(const ignition::gazebo::Entity &_entity,
                    const std::shared_ptr<const sdf::Element> &_sdf,
@@ -58,6 +58,6 @@ namespace mazegen_plugin
     /// \brief Set to true after the temp file has been cleaned up.
     bool done_{false};
   };
-} // namespace mazegen_plugin
+} // namespace mazegen
 
-#endif /* GAZEBO_MAZEGEN_PLUGIN_H_ */
+#endif /* MAZEGEN_PLUGIN_H_ */

@@ -1,23 +1,23 @@
 # gazeboMaze API Reference {#apiref}
 
-`mazegenPlugin` is an Ignition Gazebo Fortress (gz-sim 6) **world system
+`MazegenPlugin` is an Ignition Gazebo Fortress (gz-sim 6) **world system
 plugin** that loads a [micromouseonline](https://github.com/micromouseonline/mazefiles)
 text-format maze and spawns the corresponding walls, lattice posts, and
 start/goal markers into the running world.
 
 ## Where to start
 
-- @ref mazegen_plugin::mazegenPlugin - the plugin entry point.
+- @ref mazegen::MazegenPlugin - the plugin entry point.
   Attached to a world via SDF, configured once at startup, then spawns the
   generated `<model>` through the world's `/create` service.
-- @ref mazegen_plugin::Maze - in-memory representation of a parsed maze
+- @ref mazegen::Maze - in-memory representation of a parsed maze
   (cell grid plus per-edge wall flags, start cell, goal cells).
-- @ref mazegen_plugin::ParseMazeFile - reads a micromouseonline `.txt`
-  file into a @ref mazegen_plugin::Maze.
+- @ref mazegen::ParseMazeFile - reads a micromouseonline `.txt`
+  file into a @ref mazegen::Maze.
 
 ## High-level flow
 
-1. Gazebo invokes `mazegenPlugin::Configure()` when the world loads.
+1. Gazebo invokes `MazegenPlugin::Configure()` when the world loads.
 2. The plugin parses its SDF parameters (`<maze_file>`, `<cell_size>`,
    `<wall_thickness>`, `<wall_height>`, `<post_size>`, `<origin>`).
 3. The maze file is resolved against `IGN_GAZEBO_RESOURCE_PATH` and

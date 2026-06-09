@@ -65,8 +65,8 @@
       </link>
     </model>
 
-    <plugin filename="libgazebo_mazegen_plugin.so"
-      name="mazegen_plugin::mazegenPlugin">
+    <plugin filename="libmazegen_plugin.so"
+      name="mazegen::MazegenPlugin">
       <!-- <maze_file>mazes/alljapan-001-1980.txt</maze_file> -->
       <maze_file>mazes/allamerica2013.txt</maze_file>
       <cell_size>0.18</cell_size>

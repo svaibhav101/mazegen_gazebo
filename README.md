@@ -8,8 +8,8 @@ start/goal markers into a running world.
 
 | | |
 |---|---|
-| Library (SDF `filename=`) | `libgazebo_mazegen_plugin.so` |
-| Plugin class (SDF `name=`) | `mazegen_plugin::mazegenPlugin` |
+| Library (SDF `filename=`) | `libmazegen_plugin.so` |
+| Plugin class (SDF `name=`) | `mazegen::MazegenPlugin` |
 | Plugin type | World system (`ISystemConfigure`) |
 | Default cell size | 180 mm (classic micromouse) |
 | Default wall | 12 mm thick x 50 mm tall, white sides, red top |
@@ -71,7 +71,7 @@ Full details are in **[docker/README.md](./docker/README.md)**; the essentials a
 
 ```bash
 # from repo root
-docker build -f docker/Dockerfile -t mazegen-ign-gazebo .
+docker build -f docker/Dockerfile -t mazegen-gazebo .
 ```
 
 ### Run (default maze)
@@ -112,14 +112,14 @@ sudo apt install \
 Build:
 
 ```bash
-git clone https://github.com/svaibhav101/mazegen_ign_gazebo.git
-cd mazegen_ign_gazebo
+git clone https://github.com/svaibhav101/mazegen_gazebo.git
+cd mazegen_gazebo
 mkdir build
 cmake -S . -B build
 cmake --build build -j
 ```
 
-This produces `build/libgazebo_mazegen_plugin.so`.
+This produces `build/libmazegen_plugin.so`.
 
 ### Run the unit tests
 
@@ -187,7 +187,7 @@ This places:
 
 | File | Destination |
 |---|---|
-| `libgazebo_mazegen_plugin.so` | `<prefix>/lib/` |
+| `libmazegen_plugin.so` | `<prefix>/lib/` |
 
 Only the shared library is installed; the bundled `worlds/` and
 `mazes/` stay in the source tree. Reference maze files from your world
@@ -220,7 +220,7 @@ export IGN_GAZEBO_RESOURCE_PATH=/path/to/gazeboMaze:$IGN_GAZEBO_RESOURCE_PATH
 
 ---
 
-## 6. Using `mazegenPlugin` in your own world
+## 6. Using `MazegenPlugin` in your own world
 
 Drop this `<plugin>` block inside any `<world>` element. **No other
 changes** to your world are required - your existing physics, lights,
@@ -234,7 +234,7 @@ robots, and models continue to work normally.
   </physics>
   <plugin filename="ignition-gazebo-physics-system"
           name="ignition::gazebo::systems::Physics"/>
-  <!-- Required: mazegenPlugin spawns the maze through the world's
+  <!-- Required: MazegenPlugin spawns the maze through the world's
        /world/<name>/create service, which is provided by UserCommands. -->
   <plugin filename="ignition-gazebo-user-commands-system"
           name="ignition::gazebo::systems::UserCommands"/>
@@ -242,8 +242,8 @@ robots, and models continue to work normally.
           name="ignition::gazebo::systems::SceneBroadcaster"/>
 
   <!-- drop-in maze generator -->
-  <plugin filename="libgazebo_mazegen_plugin.so"
-          name="mazegen_plugin::mazegenPlugin">
+  <plugin filename="libmazegen_plugin.so"
+          name="mazegen::MazegenPlugin">
     <maze_file>/absolute/path/to/maze.txt</maze_file>
     <!-- All remaining params are optional; defaults shown. -->
     <cell_size>0.18</cell_size>
@@ -284,13 +284,13 @@ robots, and models continue to work normally.
 ├── documentation
 │   └── Doxyfile                   # Doxygen config
 ├── include
-│   ├── gazebo_mazegen_plugin.h    # public plugin class (mazegen_plugin::mazegenPlugin)
+│   ├── mazegen_plugin.h           # public plugin class (mazegen::MazegenPlugin)
 │   └── maze_parse.h               # Maze struct + ParseMazeFile() declaration
 ├── mazes                          # bundled micromouseonline-format competition mazes
 ├── README.md
 ├── setup.bash                     # sets IGN_GAZEBO_SYSTEM_PLUGIN_PATH + RESOURCE_PATH
 ├── src
-│   ├── gazebo_mazegen_plugin.cpp  # plugin: parse maze, build SDF, spawn via /create
+│   ├── mazegen_plugin.cpp         # plugin: parse maze, build SDF, spawn via /create
 │   └── maze_parse.cpp             # maze-file parser implementation
 ├── test
 │   └── test_maze_parser.cpp       # CTest unit tests for the parser
@@ -319,4 +319,4 @@ This project drew inspiration from previous work within the Micromouse and Gazeb
 
 ## License
 
-`mazegen_ign_gazebo` is made available under the Apache License 2.0. For more details, see [LICENSE](./LICENSE)
+`mazegen_gazebo` is made available under the Apache License 2.0. For more details, see [LICENSE](./LICENSE)

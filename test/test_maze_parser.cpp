@@ -10,8 +10,8 @@
 #include <iostream>
 #include <string>
 
-using mazegen_plugin::Maze;
-using mazegen_plugin::ParseMazeFile;
+using mazegen::Maze;
+using mazegen::ParseMazeFile;
 
 namespace
 {
