@@ -36,22 +36,29 @@ namespace mazegen_plugin
       lines.push_back(std::move(line));
     }
 
-    // Strip leading and trailing blank lines.
-    while (!lines.empty() && lines.front().find_first_not_of(" \t") ==
-                                 std::string::npos)
-      lines.erase(lines.begin());
-    while (!lines.empty() && lines.back().find_first_not_of(" \t") ==
-                                 std::string::npos)
-      lines.pop_back();
+    // Skip leading and trailing blank lines using index arithmetic: O(1) per
+    // line: instead of erasing from the front of the vector (which is O(n^2)).
+    auto isBlank = [](const std::string &s)
+    {
+      return s.find_first_not_of(" \t") == std::string::npos;
+    };
+    std::size_t first = 0;
+    while (first < lines.size() && isBlank(lines[first]))
+      ++first;
+    std::size_t last = lines.size();
+    while (last > first && isBlank(lines[last - 1]))
+      --last;
+    // Build a trimmed view without copying: a span [first, last).
+    const std::size_t nLines = last - first;
 
-    if (lines.size() < 3 || (lines.size() % 2) == 0)
+    if (nLines < 3 || (nLines % 2) == 0)
       throw std::runtime_error("maze_parse: expected an odd number of "
                                "non-blank lines (>=3), got " +
-                               std::to_string(lines.size()));
+                               std::to_string(nLines));
 
     // The number of posts on the header row is one more than the column count.
     std::size_t postCount = 0;
-    for (char c : lines.front())
+    for (char c : lines[first])
       if (c == 'o')
         ++postCount;
     if (postCount < 2)
@@ -59,48 +66,43 @@ namespace mazegen_plugin
 
     Maze m;
     m.cols = postCount - 1;
-    m.rows = (lines.size() - 1) / 2;
+    m.rows = (nLines - 1) / 2;
 
-    // Edge grids: hWall has (rows + 1) latitudes, vWall has (cols + 1)
-    // longitudes.
     m.hWall.assign(m.cols, std::vector<bool>(m.rows + 1, false));
     m.vWall.assign(m.cols + 1, std::vector<bool>(m.rows, false));
 
-    // Read a character, treating positions past the end of a (short) line as
-    // blank rather than out-of-range.
+    // Read a character, treating positions past the end of a short line as blank.
     auto charAt = [](const std::string &s, std::size_t i) -> char
     {
       return i < s.size() ? s[i] : ' ';
     };
 
-    // Text rows run north-to-south, so tr == 0 is the northern edge. Even
-    // rows carry horizontal walls; odd rows carry vertical walls and markers.
-    for (std::size_t tr = 0; tr < lines.size(); ++tr)
+    // Text rows run north-to-south (tr == 0 is the northern edge). Even rows
+    // carry horizontal walls; odd rows carry vertical walls and cell markers.
+    bool hasStart = false;
+    for (std::size_t tr = 0; tr < nLines; ++tr)
     {
-      const std::string &L = lines[tr];
+      const std::string &L = lines[first + tr]; // offset into untrimmed vector
       if ((tr % 2) == 0)
       {
-        // Post row, mapping to latitude r: tr == 0 is the north outer edge
-        // (r == rows) and the last row is the south outer edge (r == 0).
+        // Post row: tr == 0 → latitude r == rows (north outer edge).
         std::size_t r = m.rows - (tr / 2);
         for (std::size_t c = 0; c < m.cols; ++c)
         {
-          // The wall body occupies columns 4c+1..4c+3; sample its midpoint.
           char mid = charAt(L, kCellWidth * c + 2);
           m.hWall[c][r] = (mid == '-');
         }
       }
       else
       {
-        // Wall row, mapping to cell row 'row': tr == 1 is the top-most cell
-        // row (row == rows - 1).
+        // Wall row: tr == 1 → cell row == rows - 1 (top-most cell row).
         std::size_t row = m.rows - 1 - (tr / 2);
         for (std::size_t c = 0; c <= m.cols; ++c)
         {
           char ch = charAt(L, kCellWidth * c);
           m.vWall[c][row] = (ch == '|');
         }
-        // Scan the cell interiors of this row for 'S' and 'G' markers.
+        // Scan cell interiors for 'S' and 'G' markers.
         for (std::size_t c = 0; c < m.cols; ++c)
         {
           for (std::size_t k = 1; k < kCellWidth; ++k)
@@ -110,6 +112,7 @@ namespace mazegen_plugin
             {
               m.startCol = static_cast<int>(c);
               m.startRow = static_cast<int>(row);
+              hasStart = true;
             }
             else if (cell == 'G')
             {
@@ -122,6 +125,26 @@ namespace mazegen_plugin
           }
         }
       }
+    }
+
+    if (!hasStart)
+    {
+      // Warn but do not throw: mazes without an explicit S are valid for
+      // pure-traversal use cases; startCol/startRow default to (0,0).
+      // Callers that require a start marker should check Maze::hasStart.
+      // (A future API could expose this as a bool field on Maze.)
+      // For now emit a warning via stderr since ignmsg isn't available here.
+      fprintf(stderr,
+              "maze_parse: warning: no 'S' marker found in '%s'; "
+              "startCol/startRow default to (0, 0)\n",
+              _path.c_str());
+    }
+
+    if (m.goalCells.empty())
+    {
+      fprintf(stderr,
+              "maze_parse: warning: no 'G' marker found in '%s'\n",
+              _path.c_str());
     }
 
     return m;
