@@ -21,12 +21,13 @@ namespace mazegen
   /// <plugin filename="libmazegen_plugin.so"
   ///         name="mazegen::MazegenPlugin">
   ///   <maze_file>mazes/japan2007ef.txt</maze_file>
-  ///   <cell_size>0.18</cell_size>
-  ///   <wall_thickness>0.012</wall_thickness>
-  ///   <wall_height>0.05</wall_height>
-  ///   <wall_color>1 1 1</wall_color>
-  ///   <cap_color>0.9 0.05 0.05</cap_color>
-  ///   <origin>0 0 0</origin>
+  ///   <model_name>japan2007ef</model_name>
+  ///   <cell_size>0.18</cell_size>                <!-- meters -->
+  ///   <wall_thickness>0.012</wall_thickness>     <!-- meters -->
+  ///   <wall_height>0.05</wall_height>            <!-- meters -->
+  ///   <wall_color>1 1 1</wall_color>             <!-- R G B, range [0, 1] -->
+  ///   <cap_color>0.9 0.05 0.05</cap_color>       <!-- R G B, range [0, 1] -->
+  ///   <origin>0.0 0.0 0.0 0.0 0.0 0.0</origin>   <!-- x y z (m)  roll pitch yaw (rad) -->
   /// </plugin>
   /// \endcode
   class MazegenPlugin
@@ -53,6 +54,8 @@ namespace mazegen
     std::string pendingSdfFile_;
     /// \brief Transport service name for entity creation.
     std::string createService_;
+    /// \brief Name given to the spawned model (from <model_name>, default "maze").
+    std::string modelName_{"maze"};
     /// \brief Set to true after the /create request has been sent.
     bool requested_{false};
     /// \brief Set to true after the temp file has been cleaned up.

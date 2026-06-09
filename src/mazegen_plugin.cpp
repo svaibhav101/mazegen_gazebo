@@ -46,11 +46,13 @@ namespace mazegen
     struct Params
     {
       std::string mazeFile;
+      std::string modelName    = "maze";
       double cellSize      = 0.18;
       double wallThickness = 0.012;
       double wallHeight    = 0.05;
       double postSize      = 0.012;
       ignition::math::Vector3d origin{0.0, 0.0, 0.0};
+      ignition::math::Vector3d rotation{0.0, 0.0, 0.0};
       // Wall body colour (RGB, each in [0,1])
       ignition::math::Vector3d wallColor{1.0, 1.0, 1.0};
       // Top-cap colour (RGB, each in [0,1])
@@ -84,6 +86,21 @@ namespace mazegen
       return _sdf->HasElement(_key)
                  ? _sdf->Get<ignition::math::Vector3d>(_key)
                  : _def;
+    }
+
+    /// \brief Parse <origin>x y z [roll pitch yaw]</origin> — rotation defaults to 0.
+    void GetPose(const std::shared_ptr<const sdf::Element> &_sdf,
+                 ignition::math::Vector3d &_xyz,
+                 ignition::math::Vector3d &_rpy)
+    {
+      if (!_sdf->HasElement("origin"))
+        return;
+      std::istringstream ss(_sdf->Get<std::string>("origin"));
+      double v[6] = {0, 0, 0, 0, 0, 0};
+      for (int i = 0; i < 6; ++i)
+        if (!(ss >> v[i])) break;
+      _xyz = {v[0], v[1], v[2]};
+      _rpy = {v[3], v[4], v[5]};
     }
 
     // -----------------------------------------------------------------------
@@ -285,10 +302,10 @@ namespace mazegen
 
       // Assemble model via sdformat types and serialise to string.
       sdf::Model model;
-      model.SetName("maze");
+      model.SetName(_p.modelName);
       model.SetStatic(true);
       model.SetRawPose({_p.origin.X(), _p.origin.Y(), _p.origin.Z(),
-                        0, 0, 0});
+                        _p.rotation.X(), _p.rotation.Y(), _p.rotation.Z()});
       model.AddLink(wallsLink);
       model.AddLink(markersLink);
 
@@ -387,11 +404,13 @@ namespace mazegen
       return;
     }
     p.mazeFile       = _sdf->Get<std::string>("maze_file");
+    if (_sdf->HasElement("model_name"))
+      p.modelName = _sdf->Get<std::string>("model_name");
     p.cellSize       = GetDouble(_sdf, "cell_size",       p.cellSize);
     p.wallThickness  = GetDouble(_sdf, "wall_thickness",  p.wallThickness);
     p.wallHeight     = GetDouble(_sdf, "wall_height",     p.wallHeight);
     p.postSize       = GetDouble(_sdf, "post_size",       p.wallThickness);
-    p.origin         = GetVec3 (_sdf, "origin",           p.origin);
+    GetPose(_sdf, p.origin, p.rotation);
     p.wallColor      = GetVec3 (_sdf, "wall_color",       p.wallColor);
     p.capColor       = GetVec3 (_sdf, "cap_color",        p.capColor);
 
@@ -433,6 +452,7 @@ namespace mazegen
 
     // Store state for PreUpdate().
     pendingSdfFile_ = tmpPath.string();
+    modelName_      = p.modelName;
 
     const auto *nameComp =
         _ecm.Component<ignition::gazebo::components::Name>(_entity);
@@ -494,7 +514,7 @@ namespace mazegen
         [&](const ignition::gazebo::Entity &,
             const ignition::gazebo::components::Name *_name) -> bool
         {
-          if (_name->Data() == "maze")
+          if (_name->Data() == modelName_)
           {
             found = true;
             return false; // stop iteration

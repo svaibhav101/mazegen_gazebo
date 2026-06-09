@@ -246,11 +246,14 @@ robots, and models continue to work normally.
           name="mazegen::MazegenPlugin">
     <maze_file>/absolute/path/to/maze.txt</maze_file>
     <!-- All remaining params are optional; defaults shown. -->
-    <cell_size>0.18</cell_size>
-    <wall_thickness>0.012</wall_thickness>
-    <wall_height>0.05</wall_height>
-    <post_size>0.012</post_size>
-    <origin>0 0 0</origin>
+    <model_name>maze</model_name>
+    <cell_size>0.18</cell_size>            <!-- meters -->
+    <wall_thickness>0.012</wall_thickness>  <!-- meters -->
+    <wall_height>0.05</wall_height>         <!-- meters -->
+    <post_size>0.012</post_size>            <!-- meters -->
+    <wall_color>1 1 1</wall_color>          <!-- R G B, range [0, 1] -->
+    <cap_color>0.9 0.05 0.05</cap_color>    <!-- R G B, range [0, 1] -->
+    <origin>0 0 0 0 0 0</origin>            <!-- x y z (m)  roll pitch yaw (rad) -->
   </plugin>
 </world>
 ```
@@ -259,12 +262,15 @@ robots, and models continue to work normally.
 
 | Tag | Type | Default | Description |
 |---|---|---|---|
-| `<maze_file>` | string | - (required) | Path to a `.txt` maze. Absolute, or relative to a directory on `IGN_GAZEBO_RESOURCE_PATH`. |
+| `<maze_file>` | string | (required) | Path to a `.txt` maze : absolute, or relative to a directory on `IGN_GAZEBO_RESOURCE_PATH`. |
+| `<model_name>` | string | `maze` | Name given to the spawned model: must be unique per world when placing multiple mazes. |
 | `<cell_size>` | double | `0.18` | Grid cell pitch, meters. |
 | `<wall_thickness>` | double | `0.012` | Wall thickness, meters. |
 | `<wall_height>` | double | `0.05` | Wall height, meters. |
 | `<post_size>` | double | `wall_thickness` | Side of the square corner posts, meters. |
-| `<origin>` | vec3 | `0 0 0` | World position of the maze's SW corner (start-cell side). |
+| `<wall_color>` | vec3 | `1 1 1` | Wall body colour: R G B each in `[0, 1]`. |
+| `<cap_color>` | vec3 | `0.9 0.05 0.05` | Top-cap colour: R G B each in `[0, 1]`. |
+| `<origin>` | 3 - 6 doubles | `0.0 0.0 0.0 0.0 0.0 0.0` | Pose of the maze's SW corner: `x y z (m)` followed by optional `roll pitch yaw (rad)`. |
 
 
 ---
