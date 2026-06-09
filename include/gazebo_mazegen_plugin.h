@@ -1,6 +1,8 @@
 #ifndef GAZEBO_MAZEGEN_PLUGIN_H_
 #define GAZEBO_MAZEGEN_PLUGIN_H_
 
+#include <string>
+
 #include <ignition/gazebo/System.hh>
 #include <sdf/Element.hh>
 
@@ -27,7 +29,8 @@ namespace mazegen_plugin
   /// \endcode
   class mazegenPlugin
       : public ignition::gazebo::System,
-        public ignition::gazebo::ISystemConfigure
+        public ignition::gazebo::ISystemConfigure,
+        public ignition::gazebo::ISystemPreUpdate
   {
   public:
     mazegenPlugin() = default;
@@ -37,6 +40,21 @@ namespace mazegen_plugin
                    const std::shared_ptr<const sdf::Element> &_sdf,
                    ignition::gazebo::EntityComponentManager &_ecm,
                    ignition::gazebo::EventManager &_eventMgr) override;
+
+    /// \brief Spawns the maze on the first simulation tick, when the
+    /// world's /create transport service is guaranteed to be reachable.
+    void PreUpdate(const ignition::gazebo::UpdateInfo &_info,
+                   ignition::gazebo::EntityComponentManager &_ecm) override;
+
+  private:
+    /// \brief Path to the generated temp SDF file; empty once the file is deleted.
+    std::string pendingSdfFile_;
+    /// \brief Transport service name for entity creation.
+    std::string createService_;
+    /// \brief Set to true after the /create request has been sent.
+    bool requested_{false};
+    /// \brief Set to true after the temp file has been cleaned up.
+    bool done_{false};
   };
 } // namespace mazegen_plugin
 
