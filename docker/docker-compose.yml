@@ -5,27 +5,51 @@ services:
       dockerfile: docker/Dockerfile
     image: mazegen-ign-gazebo
     # Pass a custom maze file as the first argument, e.g.:
-    #   docker compose run mazegen mazes/alljapan-001-1980.txt
+    #   docker compose run --rm mazegen mazes/alljapan-001-1980.txt
     # Omit the argument (or use `docker compose up`) to use the default maze.
+
     environment:
       - DISPLAY=${DISPLAY}
+
+      # -----------------------------------------------------------------------
+      # RENDERING -- software (default, works on any machine)
+      #
+      # LLVMpipe uses the CPU to render.  No GPU or driver setup is needed.
+      # This is the safe default and works on every system.
+      # Comment these two lines out if you enable a hardware GPU block below.
+      # -----------------------------------------------------------------------
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - MESA_GL_VERSION_OVERRIDE=3.3
+
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       # Uncomment to mount a custom maze file from the host:
       # - ./my_maze.txt:/workspace/mazes/my_maze.txt
+
     network_mode: host
 
-    #########################################################
-    # GPU — uncomment the block that matches your hardware. #
-    #########################################################
+    # -------------------------------------------------------------------------
+    # HARDWARE GPU (optional)
+    #
+    # If your system has a GPU you can get hardware-accelerated rendering.
+    # Pick the block that matches your hardware, uncomment it, and comment out
+    # the LIBGL_ALWAYS_SOFTWARE / MESA_GL_VERSION_OVERRIDE lines above.
+    # -------------------------------------------------------------------------
 
-    ## Intel / AMD:
+    # -- Intel or AMD GPU -----------------------------------------------------
+    # Requires: /dev/dri devices present on the host (check: ls /dev/dri)
+    # No extra software needed beyond standard Mesa drivers.
+    #
     # devices:
     #   - /dev/dri:/dev/dri
     # group_add:
     #   - video
-    
-    ## NVIDIA (requires nvidia-container-toolkit):
+
+    # -- NVIDIA GPU ------------------------------------------------------------
+    # Requires: nvidia-container-toolkit installed on the host.
+    # Install: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+    # Verify:  docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+    #
     # deploy:
     #   resources:
     #     reservations:
