@@ -1,31 +1,37 @@
 #include "gazebo_mazegen_plugin.h"
 #include "maze_parse.h"
 
-#include <atomic>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
-#include <cmath>
 
 #include <ignition/common/Console.hh>
 #include <ignition/common/SystemPaths.hh>
 #include <ignition/gazebo/components/Name.hh>
 #include <ignition/gazebo/components/World.hh>
 #include <ignition/math/Pose3.hh>
+#include <ignition/math/Vector3.hh>
 #include <ignition/msgs/boolean.pb.h>
 #include <ignition/msgs/entity_factory.pb.h>
 #include <ignition/plugin/Register.hh>
 #include <ignition/transport/Node.hh>
 
+#include <sdf/Box.hh>
+#include <sdf/Collision.hh>
+#include <sdf/Geometry.hh>
+#include <sdf/Link.hh>
+#include <sdf/Material.hh>
+#include <sdf/Model.hh>
+#include <sdf/Visual.hh>
+
 
 IGNITION_ADD_PLUGIN(
   mazegen_plugin::mazegenPlugin,
   ignition::gazebo::System,
-  mazegen_plugin::mazegenPlugin::ISystemConfigure
+  mazegen_plugin::mazegenPlugin::ISystemConfigure,
+  mazegen_plugin::mazegenPlugin::ISystemPreUpdate
 )
 
 namespace mazegen_plugin
@@ -33,27 +39,25 @@ namespace mazegen_plugin
   namespace
   {
 
-    /// \brief Tunable geometry for a spawned maze.
+    /// \brief Tunable geometry and appearance for a spawned maze.
     ///
     /// Defaults follow the classic micromouse spec: 180 mm cells, 12 mm
-    /// walls, 50 mm tall.
+    /// walls, 50 mm tall, white body with a red cap.
     struct Params
     {
       std::string mazeFile;
-      double cellSize = 0.18;
+      double cellSize      = 0.18;
       double wallThickness = 0.012;
-      double wallHeight = 0.05;
-      double postSize = 0.012;
+      double wallHeight    = 0.05;
+      double postSize      = 0.012;
       ignition::math::Vector3d origin{0.0, 0.0, 0.0};
+      // Wall body colour (RGB, each in [0,1])
+      ignition::math::Vector3d wallColor{1.0, 1.0, 1.0};
+      // Top-cap colour (RGB, each in [0,1])
+      ignition::math::Vector3d capColor{0.9, 0.05, 0.05};
     };
 
-    /// \brief Resolve a maze file path to an existing file.
-    ///
-    /// An existing path is returned as-is; otherwise the
-    /// 'IGN_GAZEBO_RESOURCE_PATH' directories are searched, so the plugin
-    /// works whether launched from the source tree or an installed location.
-    /// \param[in] _path Absolute or relative maze path from the SDF.
-    /// \return The resolved path, or \p _path unchanged if nothing matched.
+    /// \brief Resolve a maze file path, falling back to IGN_GAZEBO_RESOURCE_PATH.
     std::string ResolveMazePath(const std::string &_path)
     {
       if (std::filesystem::exists(_path))
@@ -64,250 +68,243 @@ namespace mazegen_plugin
       return found.empty() ? _path : found;
     }
 
-    /// \brief Read an optional double-valued SDF element, with a fallback.
-    /// \param[in] _sdf SDF element to query.
-    /// \param[in] _key Child element name.
-    /// \param[in] _def Value to return when the child is absent.
-    /// \return The element's value, or \p _def if it is not present.
+    /// \brief Read an optional double SDF element, returning \p _def if absent.
     double GetDouble(const std::shared_ptr<const sdf::Element> &_sdf,
                      const std::string &_key, double _def)
     {
       return _sdf->HasElement(_key) ? _sdf->Get<double>(_key) : _def;
     }
 
-
-    /// \brief Append an SDF '<material>' block in the given RGB color.
-    ///
-    /// In Fortress ogre2 renderer: 
-    /// <ambient> and <diffuse> material components may appear 
-    /// gray or have little visible effect because they rely on dynamic-
-    /// lighting and scene ambient settings to be visible. 
-    /// If lighting is not properly configured or if the material 
-    /// is not receiving sufficient light, these components will not display as expected.
-    /// -----------------------------------------------------------------------------
-    /// <emissive> component renders reliably because 
-    /// it simulates light emitted directly from the surface 
-    /// and is not dependent on external lighting. 
-    
-    /// \param[in,out] _out Stream receiving the SDF fragment.
-    /// \param[in] _r,_g,_b Colour components in '[0, 1]'.
-    /// \param[in] _emissiveScale Factor applied to the emissive colour.
-    void EmitMaterial(std::ostringstream &_out, double _r, double _g,
-                      double _b, double _emissiveScale = 0.5)
+    /// \brief Read an optional Vector3d SDF element, returning \p _def if absent.
+    ignition::math::Vector3d GetVec3(
+        const std::shared_ptr<const sdf::Element> &_sdf,
+        const std::string &_key,
+        const ignition::math::Vector3d &_def)
     {
-      _out << "<material>"
-           << "<diffuse>" << _r << " " << _g << " " << _b << " 1</diffuse>"
-           << "<emissive>" << _r * _emissiveScale << " "
-           << _g * _emissiveScale << " " << _b * _emissiveScale
-           << " 1</emissive>"
-           << "</material>";
+      return _sdf->HasElement(_key)
+                 ? _sdf->Get<ignition::math::Vector3d>(_key)
+                 : _def;
     }
 
-    /// \brief Append a box shape - an optional collision plus a visual - to
-    /// the enclosing '<link>'.
-    /// \param[in,out] _out Stream receiving the SDF fragment.
-    /// \param[in] _name Base name; collisions and visuals are prefixed.
-    /// \param[in] _pose Box pose within the link frame.
-    /// \param[in] _size Box dimensions.
-    /// \param[in] _r,_g,_b Visual colour components in '[0, 1]'.
-    /// \param[in] _collision Whether to also emit a '<collision>'.
-    void EmitShape(std::ostringstream &_out, const std::string &_name,
-                   const ignition::math::Pose3d &_pose,
-                   const ignition::math::Vector3d &_size,
-                   double _r, double _g, double _b, bool _collision)
+    // -----------------------------------------------------------------------
+    // sdformat-based SDF builders (#2)
+    // -----------------------------------------------------------------------
+
+    /// \brief Fill an sdf::Material with diffuse + emissive in the given colour.
+    ///
+    /// Under Fortress ogre2, <emissive> is used because <diffuse> alone requires
+    /// dynamic lighting to be visible; emissive renders regardless of scene lights.
+    sdf::Material MakeMaterial(const ignition::math::Vector3d &_rgb,
+                               double _emissiveScale = 0.5)
     {
+      sdf::Material mat;
+      ignition::math::Color c(
+          static_cast<float>(_rgb.X()),
+          static_cast<float>(_rgb.Y()),
+          static_cast<float>(_rgb.Z()), 1.0f);
+      ignition::math::Color e(
+          static_cast<float>(_rgb.X() * _emissiveScale),
+          static_cast<float>(_rgb.Y() * _emissiveScale),
+          static_cast<float>(_rgb.Z() * _emissiveScale), 1.0f);
+      mat.SetDiffuse(c);
+      mat.SetEmissive(e);
+      return mat;
+    }
+
+    /// \brief Append a box visual (and optionally a collision) to \p _link.
+    void AddBox(sdf::Link &_link, const std::string &_name,
+                const ignition::math::Pose3d &_pose,
+                const ignition::math::Vector3d &_size,
+                const ignition::math::Vector3d &_rgb,
+                bool _collision)
+    {
+      sdf::Geometry geom;
+      sdf::Box box;
+      box.SetSize(_size);
+      geom.SetType(sdf::GeometryType::BOX);
+      geom.SetBoxShape(box);
+
       if (_collision)
-        _out << "<collision name='c_" << _name << "'>"
-             << "<pose>" << _pose << "</pose>"
-             << "<geometry><box><size>" << _size
-             << "</size></box></geometry></collision>";
-      _out << "<visual name='v_" << _name << "'>"
-           << "<pose>" << _pose << "</pose>"
-           << "<geometry><box><size>" << _size
-           << "</size></box></geometry>";
-      EmitMaterial(_out, _r, _g, _b);
-      _out << "</visual>";
+      {
+        sdf::Collision col;
+        col.SetName("c_" + _name);
+        col.SetRawPose(_pose);
+        col.SetGeom(geom);
+        _link.AddCollision(col);
+      }
+
+      sdf::Visual vis;
+      vis.SetName("v_" + _name);
+      vis.SetRawPose(_pose);
+      vis.SetGeom(geom);
+      vis.SetMaterial(MakeMaterial(_rgb));
+      _link.AddVisual(vis);
     }
 
-    /// \brief Append a two-tone wall bar matching the micromouse spec.
+    /// \brief Append a two-tone wall bar (white body + coloured cap) to \p _link.
     ///
-    /// Emits one full-height collision plus two stacked visuals: a white
-    /// body and a thin red cap, giving the "white sides, red top" look.
-    /// \param[in,out] _out Stream receiving the SDF fragment.
-    /// \param[in] _name Base name for the emitted shapes.
-    /// \param[in] _cx,_cy Bar centre in the link's xy-plane.
-    /// \param[in] _sx,_sy Bar footprint dimensions.
-    /// \param[in] _h Total bar height.
-    void EmitWallBar(std::ostringstream &_out, const std::string &_name,
-                     double _cx, double _cy, double _sx, double _sy,
-                     double _h)
+    /// One collision covers the full height; two visuals stack body and cap.
+    /// The bar is centred at (_cx, _cy) with footprint (_sx, _sy) × height _h.
+    void AddWallBar(sdf::Link &_link, const std::string &_name,
+                    double _cx, double _cy, double _sx, double _sy, double _h,
+                    const ignition::math::Vector3d &_wallColor,
+                    const ignition::math::Vector3d &_capColor)
     {
-      const double capH = _h * 0.10;
+      const double capH  = _h * 0.10;
       const double bodyH = _h - capH;
 
-      _out << "<collision name='c_" << _name << "'>"
-           << "<pose>" << _cx << " " << _cy << " " << _h * 0.5
-           << " 0 0 0</pose>"
-           << "<geometry><box><size>" << _sx << " " << _sy << " " << _h
-           << "</size></box></geometry></collision>";
+      // Single collision for the full bar.
+      sdf::Geometry geom;
+      sdf::Box box;
+      box.SetSize({_sx, _sy, _h});
+      geom.SetType(sdf::GeometryType::BOX);
+      geom.SetBoxShape(box);
 
-      EmitShape(_out, _name + "_body",
-                ignition::math::Pose3d(_cx, _cy, bodyH * 0.5, 0, 0, 0),
-                ignition::math::Vector3d(_sx, _sy, bodyH),
-                1.0, 1.0, 1.0, false);
-      EmitShape(_out, _name + "_cap",
-                ignition::math::Pose3d(_cx, _cy, bodyH + capH * 0.5, 0, 0, 0),
-                ignition::math::Vector3d(_sx, _sy, capH),
-                0.9, 0.05, 0.05, false);
+      sdf::Collision col;
+      col.SetName("c_" + _name);
+      col.SetRawPose({_cx, _cy, _h * 0.5, 0, 0, 0});
+      col.SetGeom(geom);
+      _link.AddCollision(col);
+
+      // Body visual (lower portion).
+      AddBox(_link, _name + "_body",
+             {_cx, _cy, bodyH * 0.5, 0, 0, 0},
+             {_sx, _sy, bodyH}, _wallColor, false);
+
+      // Cap visual (top strip).
+      AddBox(_link, _name + "_cap",
+             {_cx, _cy, bodyH + capH * 0.5, 0, 0, 0},
+             {_sx, _sy, capH}, _capColor, false);
     }
 
-    /// \brief Build the complete SDF document for a maze.
+    /// \brief Build the complete SDF document for the maze as a string.
     ///
-    /// The maze is one static '<model>' with two links:
-    /// - 'walls': collision+visual boxes, with collinear wall runs (and their
-    ///   endpoint posts) merged into single bars to keep the shape count low.
-    /// - 'markers': visual-only floor tiles colouring the start/goal cells.
+    /// The maze is one static model with two links:
+    /// - 'walls': collision + visual boxes. Collinear wall runs are merged into
+    ///   single bars (greedy left-to-right / bottom-to-top scan). This is a
+    ///   greedy, single-pass merge: a run of walls between two gaps produces one
+    ///   bar per contiguous segment, which is optimal per-row/column but does not
+    ///   attempt cross-row merges. A single isolated post that sits between two
+    ///   gaps on both axes will remain as a standalone cube.
+    /// - 'markers': visual-only floor tiles for start (green) and goal (red).
     ///
-    /// Geometry is built in a text-natural local frame (local +X = text-east,
-    /// local +Y = text-north) kept aligned with the world (no yaw), then
-    /// shifted so the start cell's south-west corner lands on the user
-    /// '<origin>'. The maze therefore grows into the first quadrant.
-    /// \param[in] _maze Parsed maze to render.
-    /// \param[in] _p Geometry parameters and placement origin.
-    /// \return A self-contained SDF document string.
+    /// Geometry is in a local frame with +X east and +Y north, shifted so the
+    /// SW corner of the start cell lands on \p _p.origin.
     std::string BuildMazeSdf(const Maze &_maze, const Params &_p)
     {
-      std::ostringstream s;
-      s.setf(std::ios::fixed);
-      s.precision(6);
-
-      const double cs = _p.cellSize;
-      const double wt = _p.wallThickness;
-      const double wh = _p.wallHeight;
+      const double cs      = _p.cellSize;
+      const double wt      = _p.wallThickness;
+      const double wh      = _p.wallHeight;
       const double wallLen = cs - _p.postSize;
 
-      // With no yaw, a local point (lx, ly) maps to world (tx + lx, ty + ly).
-      // The maze's bottom-left corner (col 0, row 0 in the text file) is the
-      // local point (0, 0); we drop that onto <origin> so the maze fills the
-      // first quadrant with world +X = east (right) and world +Y = north (up).
-      const double yaw = 0.0;
-      const double tx = _p.origin.X();
-      const double ty = _p.origin.Y();
-
-      s << "<?xml version='1.0'?><sdf version='1.9'>"
-        << "<model name='maze'><static>true</static>"
-        << "<pose>" << tx << " " << ty << " " << _p.origin.Z()
-        << " 0 0 " << yaw << "</pose>"
-        << "<link name='walls'>";
-
-      // postCovered[c][r] becomes true once post (c,r) has been swallowed by
-      // a merged horizontal or vertical bar. Remaining posts are emitted as
-      // isolated cubes after the bar passes.
+      // postCovered[c][r]: true when post (c,r) has been absorbed into a merged bar.
       std::vector<std::vector<bool>> postCovered(
           _maze.cols + 1, std::vector<bool>(_maze.rows + 1, false));
 
-      // Horizontal bars: at each latitude r, scan east-bound and merge
-      // consecutive set walls (plus their endpoint posts) into one bar.
+      sdf::Link wallsLink;
+      wallsLink.SetName("walls");
+
+      // --- Horizontal bars (greedy east-bound merge per latitude) ---
       for (std::size_t r = 0; r <= _maze.rows; ++r)
       {
         std::size_t c = 0;
         while (c < _maze.cols)
         {
-          if (!_maze.hWall[c][r])
-          {
-            ++c;
-            continue;
-          }
+          if (!_maze.hWall[c][r]) { ++c; continue; }
           const std::size_t cStart = c;
-          while (c < _maze.cols && _maze.hWall[c][r])
-            ++c;
-          const std::size_t cEnd = c; // last post column = cEnd
+          while (c < _maze.cols && _maze.hWall[c][r]) ++c;
+          const std::size_t cEnd = c;
           const double len = (cEnd - cStart) * cs + wt;
-          const double cx = (cStart + cEnd) * 0.5 * cs;
+          const double cx  = (cStart + cEnd) * 0.5 * cs;
           for (std::size_t k = cStart; k <= cEnd; ++k)
             postCovered[k][r] = true;
           std::ostringstream n;
           n << "h_" << cStart << "_" << r;
-          EmitWallBar(s, n.str(), cx, r * cs, len, wt, wh);
+          AddWallBar(wallsLink, n.str(), cx, r * cs, len, wt, wh,
+                     _p.wallColor, _p.capColor);
         }
       }
 
-      // Vertical bars: same idea along the +Y direction at each longitude c.
+      // --- Vertical bars (greedy north-bound merge per longitude) ---
       for (std::size_t c = 0; c <= _maze.cols; ++c)
       {
         std::size_t r = 0;
         while (r < _maze.rows)
         {
-          if (!_maze.vWall[c][r])
-          {
-            ++r;
-            continue;
-          }
+          if (!_maze.vWall[c][r]) { ++r; continue; }
           const std::size_t rStart = r;
-          while (r < _maze.rows && _maze.vWall[c][r])
-            ++r;
+          while (r < _maze.rows && _maze.vWall[c][r]) ++r;
           const std::size_t rEnd = r;
           const double len = (rEnd - rStart) * cs + wt;
-          const double cy = (rStart + rEnd) * 0.5 * cs;
+          const double cy  = (rStart + rEnd) * 0.5 * cs;
           for (std::size_t k = rStart; k <= rEnd; ++k)
             postCovered[c][k] = true;
           std::ostringstream n;
           n << "v_" << c << "_" << rStart;
-          EmitWallBar(s, n.str(), c * cs, cy, wt, len, wh);
+          AddWallBar(wallsLink, n.str(), c * cs, cy, wt, len, wh,
+                     _p.wallColor, _p.capColor);
         }
       }
 
-      // Isolated posts that no bar absorbed (sea of dots between empty cells).
+      // --- Isolated posts not absorbed by any bar ---
       for (std::size_t c = 0; c <= _maze.cols; ++c)
-      {
         for (std::size_t r = 0; r <= _maze.rows; ++r)
         {
-          if (postCovered[c][r])
-            continue;
+          if (postCovered[c][r]) continue;
           std::ostringstream n;
           n << "p_" << c << "_" << r;
-          EmitWallBar(s, n.str(), c * cs, r * cs,
-                      _p.postSize, _p.postSize, wh);
+          AddWallBar(wallsLink, n.str(), c * cs, r * cs,
+                     _p.postSize, _p.postSize, wh,
+                     _p.wallColor, _p.capColor);
         }
-      }
 
-      s << "</link>";
+      // --- Marker tiles (start = green, goal = red) ---
+      sdf::Link markersLink;
+      markersLink.SetName("markers");
 
-      // Visual-only floor tiles for start (green) and goal (red) cells.
       const double tileH = 0.001;
       const ignition::math::Vector3d tileSize(wallLen, wallLen, tileH);
-      auto tile = [&](const std::string &_n, int _c, int _r,
-                      double _r_, double _g_, double _b_)
+
+      auto addTile = [&](const std::string &_n, int _c, int _row,
+                         const ignition::math::Vector3d &_rgb)
       {
-        EmitShape(s, _n,
-                  ignition::math::Pose3d((_c + 0.5) * cs, (_r + 0.5) * cs,
-                                         tileH * 0.5 + 1e-4, 0, 0, 0),
-                  tileSize, _r_, _g_, _b_, false);
+        AddBox(markersLink, _n,
+               {(_c + 0.5) * cs, (_row + 0.5) * cs, tileH * 0.5 + 1e-4,
+                0, 0, 0},
+               tileSize, _rgb, false);
       };
-      s << "<link name='markers'>";
-      tile("start", _maze.startCol, _maze.startRow, 0.1, 0.7, 0.1);
+
+      addTile("start", _maze.startCol, _maze.startRow, {0.1, 0.7, 0.1});
       for (std::size_t i = 0; i < _maze.goalCells.size(); ++i)
       {
         std::ostringstream n;
         n << "goal_" << i;
-        tile(n.str(), _maze.goalCells[i].first, _maze.goalCells[i].second,
-             0.85, 0.1, 0.1);
+        addTile(n.str(), _maze.goalCells[i].first,
+                _maze.goalCells[i].second, {0.85, 0.1, 0.1});
       }
-      s << "</link>";
 
-      s << "</model></sdf>";
-      return s.str();
+      // Assemble model via sdformat types and serialise to string.
+      sdf::Model model;
+      model.SetName("maze");
+      model.SetStatic(true);
+      model.SetRawPose({_p.origin.X(), _p.origin.Y(), _p.origin.Z(),
+                        0, 0, 0});
+      model.AddLink(wallsLink);
+      model.AddLink(markersLink);
+
+      // Wrap in a minimal SDF document.
+      auto modelElem = model.ToElement();
+      std::ostringstream doc;
+      doc << "<?xml version='1.0'?><sdf version='1.9'>"
+          << modelElem->ToString("")
+          << "</sdf>";
+      return doc.str();
     }
 
+    // -----------------------------------------------------------------------
+    // Spawn-info logging (unchanged logic, same helpers)
+    // -----------------------------------------------------------------------
 
-    /// \brief World-frame centre of a maze cell.
-    ///
-    /// Matches BuildMazeSdf's placement: the bottom-left corner sits at
-    /// '<origin>' with no yaw, so a cell centre is offset from the origin by
-    /// '(col + 0.5, row + 0.5)' cell widths.
-    /// \param[in] _col,_row Cell indices.
-    /// \param[in] _p Geometry parameters and placement origin.
-    /// \return The cell centre in world coordinates.
     ignition::math::Vector3d CellCenter(int _col, int _row, const Params &_p)
     {
       return {_p.origin.X() + (_col + 0.5) * _p.cellSize,
@@ -315,13 +312,6 @@ namespace mazegen_plugin
               _p.origin.Z()};
     }
 
-    /// \brief Log start/goal coordinates and a suggested mouse spawn pose.
-    ///
-    /// The mouse is placed at the start cell facing its single open side
-    /// (the start is walled on the other three). Yaw is in world-frame
-    /// radians, with +X (east) = 0 and +Y (north) = +pi/2.
-    /// \param[in] _m Parsed maze.
-    /// \param[in] _p Geometry parameters and placement origin.
     void LogSpawnInfo(const Maze &_m, const Params &_p)
     {
       const auto start = CellCenter(_m.startCol, _m.startRow, _p);
@@ -339,11 +329,7 @@ namespace mazegen_plugin
                << " z=" << g.Z() << std::endl;
       }
 
-      // Edges of the start cell. hWall[c][r] is the wall on the SOUTH edge of
-      // cell (c,r); hWall[c][r+1] the NORTH edge. vWall[c][r] is the WEST edge;
-      // vWall[c+1][r] the EAST edge.
-      const int c = _m.startCol;
-      const int r = _m.startRow;
+      const int c = _m.startCol, r = _m.startRow;
       const bool wallN = _m.hWall[c][r + 1];
       const bool wallS = _m.hWall[c][r];
       const bool wallW = _m.vWall[c][r];
@@ -351,9 +337,9 @@ namespace mazegen_plugin
 
       std::string dir;
       double yaw = 0.0;
-      if (!wallE)      { dir = "east (+X)";  yaw = 0.0; }
-      else if (!wallN) { dir = "north (+Y)"; yaw = 1.5707963267948966; }
-      else if (!wallW) { dir = "west (-X)";  yaw = 3.1415926535897931; }
+      if      (!wallE) { dir = "east (+X)";  yaw =  0.0; }
+      else if (!wallN) { dir = "north (+Y)"; yaw =  1.5707963267948966; }
+      else if (!wallW) { dir = "west (-X)";  yaw =  3.1415926535897931; }
       else if (!wallS) { dir = "south (-Y)"; yaw = -1.5707963267948966; }
       else
       {
@@ -366,23 +352,28 @@ namespace mazegen_plugin
              << start.Y() << " z=" << start.Z() << " yaw=" << yaw
              << " rad (facing " << dir << ", the open side of the start cell)"
              << std::endl;
-      ignmsg << "==> mazegenPlugin: cell_size=" << _p.cellSize << " m, maze spans "
-             << "x=[" << _p.origin.X() << ", "
+      ignmsg << "==> mazegenPlugin: cell_size=" << _p.cellSize
+             << " m, maze spans x=[" << _p.origin.X() << ", "
              << _p.origin.X() + _m.cols * _p.cellSize << "] y=["
              << _p.origin.Y() << ", "
-             << _p.origin.Y() + _m.rows * _p.cellSize << "] (first quadrant, "
-             << "bottom-left corner at origin)" << std::endl;
+             << _p.origin.Y() + _m.rows * _p.cellSize
+             << "] (first quadrant, bottom-left corner at origin)" << std::endl;
     }
-  } // namespace: anonymous
+
+  } // anonymous namespace
 
 
+  // -------------------------------------------------------------------------
+  // Configure: parse SDF params, build the maze SDF, write to temp file.
+  // The actual /create service call is deferred to PreUpdate() because the
+  // transport graph isn't fully connected until Configure() returns.
+  // -------------------------------------------------------------------------
   void mazegenPlugin::Configure(
       const ignition::gazebo::Entity &_entity,
       const std::shared_ptr<const sdf::Element> &_sdf,
       ignition::gazebo::EntityComponentManager &_ecm,
-      ignition::gazebo::EventManager &_eventMgr)
+      ignition::gazebo::EventManager & /*_eventMgr*/)
   {
-    // Verify we were attached to a world.
     if (!_ecm.Component<ignition::gazebo::components::World>(_entity))
     {
       ignerr << "mazegenPlugin must be attached to a <world>." << std::endl;
@@ -395,13 +386,14 @@ namespace mazegen_plugin
       ignerr << "mazegenPlugin: <maze_file> is required." << std::endl;
       return;
     }
-    p.mazeFile = _sdf->Get<std::string>("maze_file");
-    p.cellSize = GetDouble(_sdf, "cell_size", p.cellSize);
-    p.wallThickness = GetDouble(_sdf, "wall_thickness", p.wallThickness);
-    p.wallHeight = GetDouble(_sdf, "wall_height", p.wallHeight);
-    p.postSize = GetDouble(_sdf, "post_size", p.wallThickness);
-    if (_sdf->HasElement("origin"))
-      p.origin = _sdf->Get<ignition::math::Vector3d>("origin");
+    p.mazeFile       = _sdf->Get<std::string>("maze_file");
+    p.cellSize       = GetDouble(_sdf, "cell_size",       p.cellSize);
+    p.wallThickness  = GetDouble(_sdf, "wall_thickness",  p.wallThickness);
+    p.wallHeight     = GetDouble(_sdf, "wall_height",     p.wallHeight);
+    p.postSize       = GetDouble(_sdf, "post_size",       p.wallThickness);
+    p.origin         = GetVec3 (_sdf, "origin",           p.origin);
+    p.wallColor      = GetVec3 (_sdf, "wall_color",       p.wallColor);
+    p.capColor       = GetVec3 (_sdf, "cap_color",        p.capColor);
 
     const std::string resolved = ResolveMazePath(p.mazeFile);
     Maze maze;
@@ -417,32 +409,14 @@ namespace mazegen_plugin
 
     ignmsg << "==> mazegenPlugin: loaded " << maze.cols << "x" << maze.rows
            << " maze from '" << resolved << "'" << std::endl;
-
     LogSpawnInfo(maze, p);
 
     const std::string sdfStr = BuildMazeSdf(maze, p);
 
-    // Spawn via the world's /create service rather than SdfEntityCreator.
-    // This routes the model through UserCommands so that the GUI scene
-    // receives the full set of components.
-    const auto *nameComp =
-        _ecm.Component<ignition::gazebo::components::Name>(_entity);
-    if (!nameComp)
-    {
-      ignerr << "mazegenPlugin: world has no Name component." << std::endl;
-      return;
-    }
-    const std::string service = "/world/" + nameComp->Data() + "/create";
-
-    // Write the generated SDF to a temp file and pass the filename via
-    // EntityFactory. This goes through the same loader the world uses
-    // for <include> directives, which reliably preserves visual
-    // materials (the inline-string form drops them under ogre2).
-    //
-    // The filename mixes the PID with a process-wide counter so that
-    // declaring the plugin multiple times in one world (e.g. several
-    // mazes at different origins) doesn't make two instances clobber a
-    // shared temp file before their detached threads read it.
+    // Write to a temp file: the inline-string path of EntityFactory drops
+    // materials under ogre2; the filename path goes through the full SDF loader.
+    // Counter + PID makes the name unique when the plugin is declared multiple
+    // times in one world (several mazes at different origins).
     static std::atomic<unsigned> tmpCounter{0};
     auto tmpPath = std::filesystem::temp_directory_path() /
                    ("mazegen_plugin_" + std::to_string(::getpid()) + "_" +
@@ -457,35 +431,84 @@ namespace mazegen_plugin
       f << sdfStr;
     }
 
-    // The service isn't reachable until after Configure() returns, so we
-    // dispatch the request on a detached thread with a brief wait.
-    const std::string sdfFile = tmpPath.string();
-    std::thread([service, sdfFile]()
-                {
-    ignition::transport::Node node;
-    ignition::msgs::EntityFactory req;
-    req.set_sdf_filename(sdfFile);
-    ignition::msgs::Boolean rep;
-    bool ok = false;
-    std::error_code ec;
-    for (int attempt = 0; attempt < 20; ++attempt)
+    // Store state for PreUpdate().
+    pendingSdfFile_ = tmpPath.string();
+
+    const auto *nameComp =
+        _ecm.Component<ignition::gazebo::components::Name>(_entity);
+    if (!nameComp)
     {
-      if (node.Request(service, req, 2000, rep, ok) && ok && rep.data())
+      ignerr << "mazegenPlugin: world has no Name component." << std::endl;
+      return;
+    }
+    createService_ = "/world/" + nameComp->Data() + "/create";
+  }
+
+
+  // -------------------------------------------------------------------------
+  // PreUpdate runs every simulation tick.
+  //
+  // Tick 1  (requested_ == false): the transport graph is now fully connected.
+  //   Send the /create request and set requested_ = true. Do NOT delete the
+  //   temp file yet: the service only queues the command; UserCommands reads
+  //   the file on a later ECM update.
+  //
+  // Tick 2+ (requested_ == true, done_ == false): poll the ECM for a model
+  //   named "maze". Once it appears, UserCommands has finished reading the
+  //   file and it is safe to delete.
+  // -------------------------------------------------------------------------
+  void mazegenPlugin::PreUpdate(
+      const ignition::gazebo::UpdateInfo & /*_info*/,
+      ignition::gazebo::EntityComponentManager &_ecm)
+  {
+    if (done_ || pendingSdfFile_.empty())
+      return;
+
+    if (!requested_)
+    {
+      ignition::transport::Node node;
+      ignition::msgs::EntityFactory req;
+      req.set_sdf_filename(pendingSdfFile_);
+      ignition::msgs::Boolean rep;
+      bool ok = false;
+
+      const bool called = node.Request(createService_, req, 5000, rep, ok);
+      if (!called || !ok || !rep.data())
       {
-        // The service replies as soon as the create command is *queued*;
-        // UserCommands doesn't open the SDF file until it processes the
-        // command on a later ECM update. Deleting immediately races that
-        // read and yields "Unable to read file". Give the server time to
-        // consume the file before removing it.
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-        std::filesystem::remove(sdfFile, ec);
+        ignerr << "mazegenPlugin: /create service call failed on '"
+               << createService_ << "'" << std::endl;
+        // Clean up and give up: no point polling if the request never landed.
+        std::error_code ec;
+        std::filesystem::remove(pendingSdfFile_, ec);
+        pendingSdfFile_.clear();
+        done_ = true;
         return;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      requested_ = true;
+      return; // wait at least one more tick before checking ECM
     }
-    std::filesystem::remove(sdfFile, ec);
-    ignerr << "mazegenPlugin: failed to call " << service << std::endl; })
-        .detach();
+
+    // Poll: check whether the "maze" model entity has been created yet.
+    bool found = false;
+    _ecm.Each<ignition::gazebo::components::Name>(
+        [&](const ignition::gazebo::Entity &,
+            const ignition::gazebo::components::Name *_name) -> bool
+        {
+          if (_name->Data() == "maze")
+          {
+            found = true;
+            return false; // stop iteration
+          }
+          return true;
+        });
+
+    if (found)
+    {
+      std::error_code ec;
+      std::filesystem::remove(pendingSdfFile_, ec);
+      pendingSdfFile_.clear();
+      done_ = true;
+    }
   }
 
 } // namespace mazegen_plugin

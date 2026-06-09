@@ -24,6 +24,8 @@ namespace mazegen_plugin
   ///   <cell_size>0.18</cell_size>
   ///   <wall_thickness>0.012</wall_thickness>
   ///   <wall_height>0.05</wall_height>
+  ///   <wall_color>1 1 1</wall_color>
+  ///   <cap_color>0.9 0.05 0.05</cap_color>
   ///   <origin>0 0 0</origin>
   /// </plugin>
   /// \endcode
