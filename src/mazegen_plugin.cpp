@@ -450,10 +450,6 @@ namespace mazegen
       f << sdfStr;
     }
 
-    // Store state for PreUpdate().
-    pendingSdfFile_ = tmpPath.string();
-    modelName_      = p.modelName;
-
     const auto *nameComp =
         _ecm.Component<ignition::gazebo::components::Name>(_entity);
     if (!nameComp)
@@ -461,7 +457,12 @@ namespace mazegen
       ignerr << "MazegenPlugin: world has no Name component." << std::endl;
       return;
     }
-    createService_ = "/world/" + nameComp->Data() + "/create";
+
+    // Store state for PreUpdate() — only set initialized_ after all checks pass.
+    pendingSdfFile_ = tmpPath.string();
+    modelName_      = p.modelName;
+    createService_  = "/world/" + nameComp->Data() + "/create";
+    initialized_    = true;
   }
 
 
@@ -481,7 +482,7 @@ namespace mazegen
       const ignition::gazebo::UpdateInfo & /*_info*/,
       ignition::gazebo::EntityComponentManager &_ecm)
   {
-    if (done_ || pendingSdfFile_.empty())
+    if (!initialized_ || done_ || pendingSdfFile_.empty())
       return;
 
     if (!requested_)
@@ -524,6 +525,21 @@ namespace mazegen
 
     if (found)
     {
+      std::error_code ec;
+      std::filesystem::remove(pendingSdfFile_, ec);
+      pendingSdfFile_.clear();
+      done_ = true;
+      return;
+    }
+
+    // Give up after 100 ticks (~1 s at 100 Hz) to avoid leaking the temp file
+    // if the spawned model never appears in the ECM.
+    constexpr unsigned kMaxPollTicks = 100;
+    if (++pollTicks_ >= kMaxPollTicks)
+    {
+      ignerr << "MazegenPlugin: model '" << modelName_
+             << "' did not appear in ECM after " << kMaxPollTicks
+             << " ticks; deleting temp file and giving up." << std::endl;
       std::error_code ec;
       std::filesystem::remove(pendingSdfFile_, ec);
       pendingSdfFile_.clear();

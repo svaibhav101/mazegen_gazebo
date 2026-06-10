@@ -60,6 +60,10 @@ namespace mazegen
     bool requested_{false};
     /// \brief Set to true after the temp file has been cleaned up.
     bool done_{false};
+    /// \brief Set to true only when Configure() fully succeeds.
+    bool initialized_{false};
+    /// \brief Number of ticks spent polling for the spawned model.
+    unsigned pollTicks_{0};
   };
 } // namespace mazegen
 
