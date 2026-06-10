@@ -272,6 +272,43 @@ robots, and models continue to work normally.
 | `<cap_color>` | vec3 | `0.9 0.05 0.05` | Top-cap colour: R G B each in `[0, 1]`. |
 | `<origin>` | 3 - 6 doubles | `0.0 0.0 0.0 0.0 0.0 0.0` | Pose of the maze's SW corner: `x y z (m)` followed by optional `roll pitch yaw (rad)`. |
 
+### Transport services
+
+Once the plugin has loaded the maze, it advertises two persistent Ignition transport services. When multiple mazes are loaded in the same world each gets its own pair of services, distinguished by `<model_name>`.
+
+#### `/mazegen/<model_name>/spawn_pose`
+
+Returns an `ignition::msgs::Pose` with:
+
+- **Position**: center of the start cell in world coordinates.
+- **Orientation**: yaw derived from the first open side of the start cell
+  (priority: east -> north -> west -> south).
+
+```bash
+ign service -s /mazegen/allamerica2013/spawn_pose \
+    --reqtype ignition.msgs.Empty \
+    --reptype ignition.msgs.Pose \
+    -r "" \
+    --timeout 2000
+```
+
+#### `/mazegen/<model_name>/goal_poses`
+
+Returns an `ignition::msgs::Pose_V` (repeated Pose) with one entry per goal cell,
+in the order they appear in the maze file. A classic 16×16 micromouse goal block
+contains four cells. Each entry carries:
+
+- **Position**: center of the goal cell in world coordinates.
+- **Orientation**: identity (goal cells have no facing direction).
+
+```bash
+ign service -s /mazegen/allamerica2013/goal_poses \
+    --reqtype ignition.msgs.Empty \
+    --reptype ignition.msgs.Pose_V \
+    -r "" \
+    --timeout 2000
+```
+
 
 ---
 

@@ -15,6 +15,7 @@
 #include <ignition/math/Vector3.hh>
 #include <ignition/msgs/boolean.pb.h>
 #include <ignition/msgs/entity_factory.pb.h>
+#include <ignition/msgs/pose_v.pb.h>
 #include <ignition/plugin/Register.hh>
 #include <ignition/transport/Node.hh>
 
@@ -329,6 +330,29 @@ namespace mazegen
               _p.origin.Z()};
     }
 
+    /// \brief Derive the spawn yaw from the open side of the start cell.
+    ///
+    /// Priority: east -> north -> west -> south. Returns 0 and warns if all
+    /// four sides are walled. Also fills \p _dir with a human-readable label.
+    double SpawnYaw(const Maze &_m, std::string &_dir)
+    {
+      const int c = _m.startCol, r = _m.startRow;
+      const bool wallN = _m.hWall[c][r + 1];
+      const bool wallS = _m.hWall[c][r];
+      const bool wallW = _m.vWall[c][r];
+      const bool wallE = _m.vWall[c + 1][r];
+
+      if      (!wallE) { _dir = "east (+X)";  return  0.0; }
+      else if (!wallN) { _dir = "north (+Y)"; return  1.5707963267948966; }
+      else if (!wallW) { _dir = "west (-X)";  return  3.1415926535897931; }
+      else if (!wallS) { _dir = "south (-Y)"; return -1.5707963267948966; }
+
+      ignwarn << "MazegenPlugin: start cell is walled on all four sides; "
+                 "defaulting mouse yaw to 0." << std::endl;
+      _dir = "none (fully enclosed)";
+      return 0.0;
+    }
+
     void LogSpawnInfo(const Maze &_m, const Params &_p)
     {
       const auto start = CellCenter(_m.startCol, _m.startRow, _p);
@@ -346,24 +370,8 @@ namespace mazegen
                << " z=" << g.Z() << std::endl;
       }
 
-      const int c = _m.startCol, r = _m.startRow;
-      const bool wallN = _m.hWall[c][r + 1];
-      const bool wallS = _m.hWall[c][r];
-      const bool wallW = _m.vWall[c][r];
-      const bool wallE = _m.vWall[c + 1][r];
-
       std::string dir;
-      double yaw = 0.0;
-      if      (!wallE) { dir = "east (+X)";  yaw =  0.0; }
-      else if (!wallN) { dir = "north (+Y)"; yaw =  1.5707963267948966; }
-      else if (!wallW) { dir = "west (-X)";  yaw =  3.1415926535897931; }
-      else if (!wallS) { dir = "south (-Y)"; yaw = -1.5707963267948966; }
-      else
-      {
-        ignwarn << "MazegenPlugin: start cell is walled on all four sides; "
-                   "defaulting mouse yaw to 0." << std::endl;
-        dir = "none (fully enclosed)";
-      }
+      const double yaw = SpawnYaw(_m, dir);
 
       ignmsg << "==> MazegenPlugin: spawn mouse at x=" << start.X() << " y="
              << start.Y() << " z=" << start.Z() << " yaw=" << yaw
@@ -458,6 +466,37 @@ namespace mazegen
       return;
     }
 
+    // Compute and store the spawn pose for the service handler.
+    const auto startPos = CellCenter(maze.startCol, maze.startRow, p);
+    std::string dir;
+    const double yaw = SpawnYaw(maze, dir);
+    spawnPose_ = ignition::math::Pose3d(
+        startPos.X(), startPos.Y(), startPos.Z(), 0.0, 0.0, yaw);
+
+    // Advertise the spawn-pose query service.
+    spawnPoseService_ = "/mazegen/" + p.modelName + "/spawn_pose";
+    node_.Advertise(spawnPoseService_,
+        &MazegenPlugin::OnSpawnPoseRequest, this);
+    ignmsg << "==> MazegenPlugin: spawn pose service ready at '"
+           << spawnPoseService_ << "'" << std::endl;
+
+    // Build and store the goal poses (position only, identity orientation).
+    goalPoses_.clear_pose();
+    for (const auto &gc : maze.goalCells)
+    {
+      const auto pos = CellCenter(gc.first, gc.second, p);
+      ignition::msgs::Pose *entry = goalPoses_.add_pose();
+      ignition::msgs::Set(entry,
+          ignition::math::Pose3d(pos.X(), pos.Y(), pos.Z(), 0.0, 0.0, 0.0));
+    }
+
+    // Advertise the goal-poses query service.
+    goalPosesService_ = "/mazegen/" + p.modelName + "/goal_poses";
+    node_.Advertise(goalPosesService_,
+        &MazegenPlugin::OnGoalPosesRequest, this);
+    ignmsg << "==> MazegenPlugin: goal poses service ready at '"
+           << goalPosesService_ << "'" << std::endl;
+
     // Store state for PreUpdate() — only set initialized_ after all checks pass.
     pendingSdfFile_ = tmpPath.string();
     modelName_      = p.modelName;
@@ -487,13 +526,12 @@ namespace mazegen
 
     if (!requested_)
     {
-      ignition::transport::Node node;
       ignition::msgs::EntityFactory req;
       req.set_sdf_filename(pendingSdfFile_);
       ignition::msgs::Boolean rep;
       bool ok = false;
 
-      const bool called = node.Request(createService_, req, 5000, rep, ok);
+      const bool called = node_.Request(createService_, req, 5000, rep, ok);
       if (!called || !ok || !rep.data())
       {
         ignerr << "MazegenPlugin: /create service call failed on '"
@@ -545,6 +583,18 @@ namespace mazegen
       pendingSdfFile_.clear();
       done_ = true;
     }
+  }
+
+  bool MazegenPlugin::OnSpawnPoseRequest(ignition::msgs::Pose &_rep)
+  {
+    ignition::msgs::Set(&_rep, spawnPose_);
+    return true;
+  }
+
+  bool MazegenPlugin::OnGoalPosesRequest(ignition::msgs::Pose_V &_rep)
+  {
+    _rep = goalPoses_;
+    return true;
   }
 
 } // namespace mazegen
