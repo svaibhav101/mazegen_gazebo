@@ -2,6 +2,7 @@
 #include "maze_parse.h"
 
 #include <atomic>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -28,13 +29,11 @@
 #include <sdf/Model.hh>
 #include <sdf/Visual.hh>
 
-
 IGNITION_ADD_PLUGIN(
-  mazegen::MazegenPlugin,
-  ignition::gazebo::System,
-  mazegen::MazegenPlugin::ISystemConfigure,
-  mazegen::MazegenPlugin::ISystemPreUpdate
-)
+    mazegen::MazegenPlugin,
+    ignition::gazebo::System,
+    mazegen::MazegenPlugin::ISystemConfigure,
+    mazegen::MazegenPlugin::ISystemPreUpdate)
 
 namespace mazegen
 {
@@ -48,11 +47,11 @@ namespace mazegen
     struct Params
     {
       std::string mazeFile;
-      std::string modelName    = "maze";
-      double cellSize      = 0.18;
+      std::string modelName = "maze";
+      double cellSize = 0.18;
       double wallThickness = 0.012;
-      double wallHeight    = 0.05;
-      double postSize      = 0.012;
+      double wallHeight = 0.05;
+      double postSize = 0.012;
       ignition::math::Vector3d origin{0.0, 0.0, 0.0};
       ignition::math::Vector3d rotation{0.0, 0.0, 0.0};
       // Wall body colour (RGB, each in [0,1])
@@ -100,7 +99,8 @@ namespace mazegen
       std::istringstream ss(_sdf->Get<std::string>("origin"));
       double v[6] = {0, 0, 0, 0, 0, 0};
       for (int i = 0; i < 6; ++i)
-        if (!(ss >> v[i])) break;
+        if (!(ss >> v[i]))
+          break;
       _xyz = {v[0], v[1], v[2]};
       _rpy = {v[3], v[4], v[5]};
     }
@@ -169,7 +169,7 @@ namespace mazegen
                     const ignition::math::Vector3d &_wallColor,
                     const ignition::math::Vector3d &_capColor)
     {
-      const double capH  = _h * 0.10;
+      const double capH = _h * 0.10;
       const double bodyH = _h - capH;
 
       // Single collision for the full bar.
@@ -211,9 +211,9 @@ namespace mazegen
     /// SW corner of the start cell lands on \p _p.origin.
     std::string BuildMazeSdf(const Maze &_maze, const Params &_p)
     {
-      const double cs      = _p.cellSize;
-      const double wt      = _p.wallThickness;
-      const double wh      = _p.wallHeight;
+      const double cs = _p.cellSize;
+      const double wt = _p.wallThickness;
+      const double wh = _p.wallHeight;
       const double wallLen = cs - _p.postSize;
 
       // postCovered[c][r]: true when post (c,r) has been absorbed into a merged bar.
@@ -229,12 +229,17 @@ namespace mazegen
         std::size_t c = 0;
         while (c < _maze.cols)
         {
-          if (!_maze.hWall[c][r]) { ++c; continue; }
+          if (!_maze.hWall[c][r])
+          {
+            ++c;
+            continue;
+          }
           const std::size_t cStart = c;
-          while (c < _maze.cols && _maze.hWall[c][r]) ++c;
+          while (c < _maze.cols && _maze.hWall[c][r])
+            ++c;
           const std::size_t cEnd = c;
           const double len = (cEnd - cStart) * cs + wt;
-          const double cx  = (cStart + cEnd) * 0.5 * cs;
+          const double cx = (cStart + cEnd) * 0.5 * cs;
           for (std::size_t k = cStart; k <= cEnd; ++k)
             postCovered[k][r] = true;
           std::ostringstream n;
@@ -250,12 +255,17 @@ namespace mazegen
         std::size_t r = 0;
         while (r < _maze.rows)
         {
-          if (!_maze.vWall[c][r]) { ++r; continue; }
+          if (!_maze.vWall[c][r])
+          {
+            ++r;
+            continue;
+          }
           const std::size_t rStart = r;
-          while (r < _maze.rows && _maze.vWall[c][r]) ++r;
+          while (r < _maze.rows && _maze.vWall[c][r])
+            ++r;
           const std::size_t rEnd = r;
           const double len = (rEnd - rStart) * cs + wt;
-          const double cy  = (rStart + rEnd) * 0.5 * cs;
+          const double cy = (rStart + rEnd) * 0.5 * cs;
           for (std::size_t k = rStart; k <= rEnd; ++k)
             postCovered[c][k] = true;
           std::ostringstream n;
@@ -269,7 +279,8 @@ namespace mazegen
       for (std::size_t c = 0; c <= _maze.cols; ++c)
         for (std::size_t r = 0; r <= _maze.rows; ++r)
         {
-          if (postCovered[c][r]) continue;
+          if (postCovered[c][r])
+            continue;
           std::ostringstream n;
           n << "p_" << c << "_" << r;
           AddWallBar(wallsLink, n.str(), c * cs, r * cs,
@@ -324,18 +335,28 @@ namespace mazegen
     // Spawn-info helpers
     // -----------------------------------------------------------------------
 
+    /// \brief Return the world-frame centre of cell (_col, _row).
+    ///
+    /// Applies the maze yaw rotation to the local cell offset before adding
+    /// the origin translation, so the result is correct even when <origin>
+    /// includes a non-zero yaw.
     ignition::math::Vector3d CellCenter(int _col, int _row, const Params &_p)
     {
-      return {_p.origin.X() + (_col + 0.5) * _p.cellSize,
-              _p.origin.Y() + (_row + 0.5) * _p.cellSize,
+      const double lx = (_col + 0.5) * _p.cellSize;
+      const double ly = (_row + 0.5) * _p.cellSize;
+      const double cosY = std::cos(_p.rotation.Z());
+      const double sinY = std::sin(_p.rotation.Z());
+      return {_p.origin.X() + cosY * lx - sinY * ly,
+              _p.origin.Y() + sinY * lx + cosY * ly,
               _p.origin.Z()};
     }
 
-    /// \brief Derive the spawn yaw from the open side of the start cell.
+    /// \brief Derive the world-frame spawn yaw from the open side of the start
+    /// cell, composed with the maze's own yaw from <origin>.
     ///
-    /// Priority: east -> north -> west -> south. Returns 0 and warns if all
-    /// four sides are walled. Also fills \p _dir with a human-readable label.
-    double SpawnYaw(const Maze &_m, std::string &_dir)
+    /// Priority: east -> north -> west -> south. Warns and defaults to the
+    /// maze yaw if the start cell is walled on all four sides.
+    double SpawnYaw(const Maze &_m, const Params &_p, std::string &_dir)
     {
       const int c = _m.startCol, r = _m.startRow;
       const bool wallN = _m.hWall[c][r + 1];
@@ -343,48 +364,88 @@ namespace mazegen
       const bool wallW = _m.vWall[c][r];
       const bool wallE = _m.vWall[c + 1][r];
 
-      if      (!wallE) { _dir = "east (+X)";  return  0.0; }
-      else if (!wallN) { _dir = "north (+Y)"; return  1.5707963267948966; }
-      else if (!wallW) { _dir = "west (-X)";  return  3.1415926535897931; }
-      else if (!wallS) { _dir = "south (-Y)"; return -1.5707963267948966; }
+      double localYaw;
+      bool enclosed = false;
+      if (!wallE)
+        localYaw = 0.0;
+      else if (!wallN)
+        localYaw = 1.5707963267948966;
+      else if (!wallW)
+        localYaw = 3.1415926535897931;
+      else if (!wallS)
+        localYaw = -1.5707963267948966;
+      else
+      {
+        ignwarn << "MazegenPlugin: start cell is walled on all four sides; "
+                   "defaulting mouse yaw to maze orientation."
+                << std::endl;
+        localYaw = 0.0;
+        enclosed = true;
+      }
 
-      ignwarn << "MazegenPlugin: start cell is walled on all four sides; "
-                 "defaulting mouse yaw to 0." << std::endl;
-      _dir = "none (fully enclosed)";
-      return 0.0;
+      const double worldYaw = localYaw + _p.rotation.Z();
+
+      if (enclosed)
+      {
+        _dir = "none (fully enclosed)";
+      }
+      else
+      {
+        // Derive a cardinal label from the world-frame yaw so the log message
+        // stays consistent after maze rotation is applied.
+        // Normalise to (-pi, pi] then bucket into 45-degree sectors.
+        constexpr double pi = 3.1415926535897932;
+        double a = std::fmod(worldYaw, 2.0 * pi);
+        if (a > pi)
+          a -= 2.0 * pi;
+        if (a <= -pi)
+          a += 2.0 * pi;
+        const double absA = std::abs(a);
+        if (absA <= pi / 4.0)
+          _dir = "east";
+        else if (absA >= 3 * pi / 4.0)
+          _dir = "west";
+        else if (a > 0.0)
+          _dir = "north";
+        else
+          _dir = "south";
+      }
+
+      return worldYaw;
     }
 
     void LogSpawnInfo(const Maze &_m, const Params &_p)
     {
       const auto start = CellCenter(_m.startCol, _m.startRow, _p);
-      ignmsg << "==> MazegenPlugin [" << _p.modelName << "]: start cell (col "
-             << _m.startCol << ", row " << _m.startRow << ") at world x="
-             << start.X() << " y=" << start.Y() << " z=" << start.Z()
-             << std::endl;
+
+      // Use std::cout so these lines are visible at the default verbosity
+      // level (ign gazebo without -v). ignmsg requires -v 3.
+      std::cout << "[MazegenPlugin/" << _p.modelName << "] loaded "
+                << _m.cols << "x" << _m.rows << " maze" << std::endl;
+
+      std::string dir;
+      const double yaw = SpawnYaw(_m, _p, dir);
+
+      std::cout << "[MazegenPlugin/" << _p.modelName << "] spawn pose:"
+                << " x=" << start.X()
+                << " y=" << start.Y()
+                << " z=" << start.Z()
+                << " yaw=" << yaw << " rad"
+                << " (facing " << dir << ")" << std::endl;
+
+      std::cout << "[MazegenPlugin/" << _p.modelName << "] start cell:"
+                << " col=" << _m.startCol << " row=" << _m.startRow
+                << std::endl;
 
       for (std::size_t i = 0; i < _m.goalCells.size(); ++i)
       {
         const auto g = CellCenter(_m.goalCells[i].first,
                                   _m.goalCells[i].second, _p);
-        ignmsg << "==> MazegenPlugin [" << _p.modelName << "]: goal cell " << i
-               << " (col " << _m.goalCells[i].first << ", row "
-               << _m.goalCells[i].second << ") at world x=" << g.X()
-               << " y=" << g.Y() << " z=" << g.Z() << std::endl;
+        std::cout << "[MazegenPlugin/" << _p.modelName << "] goal " << i
+                  << ": col=" << _m.goalCells[i].first
+                  << " row=" << _m.goalCells[i].second
+                  << " x=" << g.X() << " y=" << g.Y() << std::endl;
       }
-
-      std::string dir;
-      const double yaw = SpawnYaw(_m, dir);
-
-      ignmsg << "==> MazegenPlugin [" << _p.modelName << "]: spawn mouse at x="
-             << start.X() << " y=" << start.Y() << " z=" << start.Z()
-             << " yaw=" << yaw << " rad (facing " << dir
-             << ", the open side of the start cell)" << std::endl;
-      ignmsg << "==> MazegenPlugin [" << _p.modelName << "]: cell_size="
-             << _p.cellSize << " m, maze spans x=[" << _p.origin.X() << ", "
-             << _p.origin.X() + _m.cols * _p.cellSize << "] y=["
-             << _p.origin.Y() << ", "
-             << _p.origin.Y() + _m.rows * _p.cellSize
-             << "] (first quadrant, bottom-left corner at origin)" << std::endl;
     }
 
     // -----------------------------------------------------------------------
@@ -395,12 +456,12 @@ namespace mazegen
     Params ReadSharedParams(const std::shared_ptr<const sdf::Element> &_sdf)
     {
       Params p;
-      p.cellSize      = GetDouble(_sdf, "cell_size",      p.cellSize);
+      p.cellSize = GetDouble(_sdf, "cell_size", p.cellSize);
       p.wallThickness = GetDouble(_sdf, "wall_thickness", p.wallThickness);
-      p.wallHeight    = GetDouble(_sdf, "wall_height",    p.wallHeight);
-      p.postSize      = GetDouble(_sdf, "post_size",      p.wallThickness);
-      p.wallColor     = GetVec3 (_sdf, "wall_color",      p.wallColor);
-      p.capColor      = GetVec3 (_sdf, "cap_color",       p.capColor);
+      p.wallHeight = GetDouble(_sdf, "wall_height", p.wallHeight);
+      p.postSize = GetDouble(_sdf, "post_size", p.wallThickness);
+      p.wallColor = GetVec3(_sdf, "wall_color", p.wallColor);
+      p.capColor = GetVec3(_sdf, "cap_color", p.capColor);
       return p;
     }
 
@@ -430,18 +491,17 @@ namespace mazegen
       }
 
       // Per-maze geometry overrides (optional).
-      p.cellSize      = GetDouble(_maze, "cell_size",      p.cellSize);
+      p.cellSize = GetDouble(_maze, "cell_size", p.cellSize);
       p.wallThickness = GetDouble(_maze, "wall_thickness", p.wallThickness);
-      p.wallHeight    = GetDouble(_maze, "wall_height",    p.wallHeight);
-      p.postSize      = GetDouble(_maze, "post_size",      p.postSize);
-      p.wallColor     = GetVec3 (_maze, "wall_color",      p.wallColor);
-      p.capColor      = GetVec3 (_maze, "cap_color",       p.capColor);
+      p.wallHeight = GetDouble(_maze, "wall_height", p.wallHeight);
+      p.postSize = GetDouble(_maze, "post_size", p.postSize);
+      p.wallColor = GetVec3(_maze, "wall_color", p.wallColor);
+      p.capColor = GetVec3(_maze, "cap_color", p.capColor);
       GetPose(_maze, p.origin, p.rotation);
       return p;
     }
 
   } // anonymous namespace
-
 
   // -------------------------------------------------------------------------
   // Configure: parse SDF params, build maze SDF(s), write to temp files.
@@ -495,7 +555,8 @@ namespace mazegen
       if (!_sdf->HasElement("maze_file"))
       {
         ignerr << "MazegenPlugin: provide either <maze> blocks or a flat "
-                  "<maze_file> element." << std::endl;
+                  "<maze_file> element."
+               << std::endl;
         return;
       }
       Params p = ReadSharedParams(_sdf);
@@ -526,9 +587,8 @@ namespace mazegen
         continue;
       }
 
-      ignmsg << "==> MazegenPlugin [" << p.modelName << "]: loaded "
-             << maze.cols << "x" << maze.rows << " maze from '"
-             << resolved << "'" << std::endl;
+      std::cout << "[MazegenPlugin/" << p.modelName << "] loading from '"
+                << resolved << "'" << std::endl;
       LogSpawnInfo(maze, p);
 
       const std::string sdfStr = BuildMazeSdf(maze, p);
@@ -552,14 +612,14 @@ namespace mazegen
 
       // Build and store the instance.
       MazeInstance inst;
-      inst.modelName      = p.modelName;
+      inst.modelName = p.modelName;
       inst.pendingSdfFile = tmpPath.string();
-      inst.createService  = createService;
+      inst.createService = createService;
 
       // Spawn pose (position + yaw from open side of start cell).
       const auto startPos = CellCenter(maze.startCol, maze.startRow, p);
       std::string dir;
-      const double yaw = SpawnYaw(maze, dir);
+      const double yaw = SpawnYaw(maze, p, dir);
       inst.spawnPose = ignition::math::Pose3d(
           startPos.X(), startPos.Y(), startPos.Z(), 0.0, 0.0, yaw);
 
@@ -569,35 +629,35 @@ namespace mazegen
         const auto pos = CellCenter(gc.first, gc.second, p);
         ignition::msgs::Pose *entry = inst.goalPoses.add_pose();
         ignition::msgs::Set(entry,
-            ignition::math::Pose3d(pos.X(), pos.Y(), pos.Z(), 0.0, 0.0, 0.0));
+                            ignition::math::Pose3d(pos.X(), pos.Y(), pos.Z(), 0.0, 0.0, 0.0));
       }
 
       // Advertise per-maze query services. Capture by value so each lambda
       // holds its own copy of the pose data independent of the vector.
-      const ignition::math::Pose3d spawnPoseCopy  = inst.spawnPose;
-      const ignition::msgs::Pose_V goalPosesCopy   = inst.goalPoses;
+      const ignition::math::Pose3d spawnPoseCopy = inst.spawnPose;
+      const ignition::msgs::Pose_V goalPosesCopy = inst.goalPoses;
 
       const std::string spawnSvc = "/mazegen/" + p.modelName + "/spawn_pose";
-      const std::string goalSvc  = "/mazegen/" + p.modelName + "/goal_poses";
+      const std::string goalSvc = "/mazegen/" + p.modelName + "/goal_poses";
 
       std::function<bool(ignition::msgs::Pose &)> spawnCb =
           [spawnPoseCopy](ignition::msgs::Pose &_rep) mutable -> bool
-          {
-            ignition::msgs::Set(&_rep, spawnPoseCopy);
-            return true;
-          };
+      {
+        ignition::msgs::Set(&_rep, spawnPoseCopy);
+        return true;
+      };
       std::function<bool(ignition::msgs::Pose_V &)> goalCb =
           [goalPosesCopy](ignition::msgs::Pose_V &_rep) mutable -> bool
-          {
-            _rep = goalPosesCopy;
-            return true;
-          };
+      {
+        _rep = goalPosesCopy;
+        return true;
+      };
       node_.Advertise(spawnSvc, spawnCb);
-      node_.Advertise(goalSvc,  goalCb);
+      node_.Advertise(goalSvc, goalCb);
 
-      ignmsg << "==> MazegenPlugin [" << p.modelName
-             << "]: services ready at '" << spawnSvc
-             << "' and '" << goalSvc << "'" << std::endl;
+      std::cout << "[MazegenPlugin/" << p.modelName << "] services ready:"
+                << " " << spawnSvc
+                << " | " << goalSvc << std::endl;
 
       mazes_.push_back(std::move(inst));
     }
@@ -605,7 +665,6 @@ namespace mazegen
     if (!mazes_.empty())
       initialized_ = true;
   }
-
 
   // -------------------------------------------------------------------------
   // PreUpdate runs every simulation tick.
