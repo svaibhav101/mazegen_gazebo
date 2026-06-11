@@ -222,55 +222,86 @@ export IGN_GAZEBO_RESOURCE_PATH=/path/to/gazeboMaze:$IGN_GAZEBO_RESOURCE_PATH
 
 ## 6. Using `MazegenPlugin` in your own world
 
-Drop this `<plugin>` block inside any `<world>` element. **No other
-changes** to your world are required - your existing physics, lights,
+Drop a single `<plugin>` block inside any `<world>` element. **No other
+changes** to your world are required. Your existing physics, lights,
 robots, and models continue to work normally.
 
-```xml
-<world name="my_world">
-  <!-- your existing scene -->
-  <physics name="physics" type="dart">
-    <max_step_size>0.001</max_step_size>
-  </physics>
-  <plugin filename="ignition-gazebo-physics-system"
-          name="ignition::gazebo::systems::Physics"/>
-  <!-- Required: MazegenPlugin spawns the maze through the world's
-       /world/<name>/create service, which is provided by UserCommands. -->
-  <plugin filename="ignition-gazebo-user-commands-system"
-          name="ignition::gazebo::systems::UserCommands"/>
-  <plugin filename="ignition-gazebo-scene-broadcaster-system"
-          name="ignition::gazebo::systems::SceneBroadcaster"/>
+### Single maze
 
-  <!-- drop-in maze generator -->
-  <plugin filename="libmazegen_plugin.so"
-          name="mazegen::MazegenPlugin">
-    <maze_file>/absolute/path/to/maze.txt</maze_file>
-    <!-- All remaining params are optional; defaults shown. -->
-    <model_name>maze</model_name>
-    <cell_size>0.18</cell_size>            <!-- meters -->
-    <wall_thickness>0.012</wall_thickness>  <!-- meters -->
-    <wall_height>0.05</wall_height>         <!-- meters -->
-    <post_size>0.012</post_size>            <!-- meters -->
-    <wall_color>1 1 1</wall_color>          <!-- R G B, range [0, 1] -->
-    <cap_color>0.9 0.05 0.05</cap_color>    <!-- R G B, range [0, 1] -->
-    <origin>0 0 0 0 0 0</origin>            <!-- x y z (m)  roll pitch yaw (rad) -->
-  </plugin>
-</world>
+```xml
+<plugin filename="libmazegen_plugin.so"
+        name="mazegen::MazegenPlugin">
+  <maze_file>/absolute/path/to/maze.txt</maze_file>
+  <!-- All remaining params are optional; defaults shown. -->
+  <model_name>maze</model_name>
+  <cell_size>0.18</cell_size>            <!-- meters -->
+  <wall_thickness>0.012</wall_thickness>  <!-- meters -->
+  <wall_height>0.05</wall_height>         <!-- meters -->
+  <post_size>0.012</post_size>            <!-- meters -->
+  <wall_color>1 1 1</wall_color>          <!-- R G B, range [0, 1] -->
+  <cap_color>0.9 0.05 0.05</cap_color>    <!-- R G B, range [0, 1] -->
+  <origin>0 0 0 0 0 0</origin>            <!-- x y z (m)  roll pitch yaw (rad) -->
+</plugin>
+```
+
+### Multiple mazes
+
+Use one `<maze>` child block per maze. Geometry and colour params placed
+directly on the `<plugin>` element are shared by all blocks; any `<maze>`
+block can override them individually.
+
+```xml
+<plugin filename="libmazegen_plugin.so"
+        name="mazegen::MazegenPlugin">
+  <!-- shared params (all optional) -->
+  <cell_size>0.18</cell_size>
+  <wall_color>1 1 1</wall_color>
+  <cap_color>0.9 0.05 0.05</cap_color>
+
+  <maze>
+    <file>mazes/alljapan-001-1980.txt</file>
+    <model_name>japan1980</model_name>   <!-- optional; default: maze_0 -->
+    <origin>0 0 0 0 0 0</origin>
+  </maze>
+  <maze>
+    <file>mazes/allamerica2013.txt</file>
+    <model_name>america2013</model_name>
+    <origin>5 0 0 0 0 0</origin>         <!-- offset 5 m along X -->
+  </maze>
+</plugin>
+```
+
+A ready-to-run example is provided in [`worlds/two_mazes.sdf`](./worlds/two_mazes.sdf):
+
+```bash
+source setup.bash
+ign gazebo -v 4 worlds/two_mazes.sdf
 ```
 
 ### Parameters
 
+#### Top-level (single-maze) or shared (multi-maze)
+
 | Tag | Type | Default | Description |
 |---|---|---|---|
-| `<maze_file>` | string | (required) | Path to a `.txt` maze : absolute, or relative to a directory on `IGN_GAZEBO_RESOURCE_PATH`. |
-| `<model_name>` | string | `maze` | Name given to the spawned model: must be unique per world when placing multiple mazes. |
+| `<maze_file>` | string | (required) | Path to a `.txt` maze: absolute, or relative to `IGN_GAZEBO_RESOURCE_PATH`. |
+| `<model_name>` | string | `maze` | Name of the spawned model (single-maze only). |
 | `<cell_size>` | double | `0.18` | Grid cell pitch, meters. |
 | `<wall_thickness>` | double | `0.012` | Wall thickness, meters. |
 | `<wall_height>` | double | `0.05` | Wall height, meters. |
 | `<post_size>` | double | `wall_thickness` | Side of the square corner posts, meters. |
 | `<wall_color>` | vec3 | `1 1 1` | Wall body colour: R G B each in `[0, 1]`. |
 | `<cap_color>` | vec3 | `0.9 0.05 0.05` | Top-cap colour: R G B each in `[0, 1]`. |
-| `<origin>` | 3 - 6 doubles | `0.0 0.0 0.0 0.0 0.0 0.0` | Pose of the maze's SW corner: `x y z (m)` followed by optional `roll pitch yaw (rad)`. |
+| `<origin>` | 3 - 6 doubles | `0 0 0 0 0 0` | Pose of the maze SW corner: `x y z (m)` then optional `roll pitch yaw (rad)`. |
+
+#### Per `<maze>` block (multi-maze)
+
+| Tag | Type | Default | Description |
+|---|---|---|---|
+| `<file>` | string | (required) | Path to the maze `.txt` file. |
+| `<model_name>` | string | `maze_<N>` | Name of the spawned model; must be unique per world. |
+| `<origin>` | 3 - 6 doubles | `0 0 0 0 0 0` | World pose of this maze's SW corner. |
+| geometry/colour | same as above | inherited from plugin | Any shared param can be overridden per block. |
 
 ### Transport services
 
@@ -285,6 +316,7 @@ Returns an `ignition::msgs::Pose` with:
   (priority: east -> north -> west -> south).
 
 ```bash
+# Example: <model_name>:=allamerica2013
 ign service -s /mazegen/allamerica2013/spawn_pose \
     --reqtype ignition.msgs.Empty \
     --reptype ignition.msgs.Pose \
@@ -302,6 +334,7 @@ contains four cells. Each entry carries:
 - **Orientation**: identity (goal cells have no facing direction).
 
 ```bash
+# Example: <model_name>:=allamerica2013
 ign service -s /mazegen/allamerica2013/goal_poses \
     --reqtype ignition.msgs.Empty \
     --reptype ignition.msgs.Pose_V \
@@ -338,7 +371,8 @@ ign service -s /mazegen/allamerica2013/goal_poses \
 ├── test
 │   └── test_maze_parser.cpp       # CTest unit tests for the parser
 └── worlds
-    └── maze.sdf                   # example world loading in the plugin
+    ├── maze.sdf                   # single-maze example world
+    └── two_mazes.sdf              # multi-maze example (two mazes side by side)
 ```
 
 ---
