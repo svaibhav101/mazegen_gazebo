@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!--
+  Example world: two mazes side by side.
+
+  japan1980  starts at origin (0, 0, 0).
+  america2013 is offset +3 m along X so the two 16x16 grids don't overlap
+  (16 cells × 0.18 m/cell = 2.88 m per side; 3 m gives a comfortable gap).
+
+  Services available after loading:
+    /mazegen/japan1980/spawn_pose      ignition.msgs.Pose
+    /mazegen/japan1980/goal_poses      ignition.msgs.Pose_V
+    /mazegen/america2013/spawn_pose    ignition.msgs.Pose
+    /mazegen/america2013/goal_poses    ignition.msgs.Pose_V
+-->
+<sdf version="1.9">
+  <world name="two_mazes_world">
+
+    <physics name="physics" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+      name="ignition::gazebo::systems::Physics" />
+    <plugin filename="ignition-gazebo-user-commands-system"
+      name="ignition::gazebo::systems::UserCommands" />
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+      name="ignition::gazebo::systems::SceneBroadcaster" />
+    <plugin filename="ignition-gazebo-sensors-system"
+      name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>20 20</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>20 20</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.08 0.08 0.08 1</ambient>
+            <diffuse>0.12 0.12 0.12 1</diffuse>
+            <specular>0 0 0 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <plugin filename="libmazegen_plugin.so"
+      name="mazegen::MazegenPlugin">
+
+      <!-- Shared geometry and colour params (applied to all mazes below). -->
+      <cell_size>0.18</cell_size>
+      <wall_thickness>0.012</wall_thickness>
+      <wall_height>0.05</wall_height>
+      <wall_color>1 1 1</wall_color>
+      <cap_color>0.9 0.05 0.05</cap_color>
+
+      <maze>
+        <file>mazes/alljapan-001-1980.txt</file>
+        <model_name>alljapan1980</model_name>
+        <origin>0 0 0 0 0 0</origin>
+      </maze>
+
+      <maze>
+        <file>mazes/allamerica2013.txt</file>
+        <model_name>allamerica2013</model_name>
+        <!-- offset 3 m along X; that leaves a ~0.1 m gap between the two grids -->
+        <origin>3 0 0 0 0 0</origin>
+      </maze>
+
+    </plugin>
+
+  </world>
+</sdf>
