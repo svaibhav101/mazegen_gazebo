@@ -21,7 +21,10 @@ find_package(sdformat12 REQUIRED)
 
 add_library(mazegen_plugin SHARED
   src/mazegen_plugin.cpp
-  src/maze_parse.cpp)
+  src/maze_parse.cpp
+  src/maze_params.cpp
+  src/maze_sdf_builder.cpp
+  src/maze_spawn_utils.cpp)
 set_property(TARGET mazegen_plugin PROPERTY CXX_STANDARD 17)
 
 target_include_directories(mazegen_plugin PRIVATE

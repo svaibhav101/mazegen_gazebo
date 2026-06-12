@@ -4,9 +4,9 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     image: mazegen-gazebo
-    # Pass a custom maze file as the first argument, e.g.:
-    #   docker compose run --rm mazegen mazes/alljapan-001-1980.txt
-    # Omit the argument (or use `docker compose up`) to use the default maze.
+    # Default (no arg): loads worlds/two_mazes.sdf (two mazes side by side).
+    # Pass "single" to load worlds/maze.sdf instead:
+    #   docker compose run --rm mazegen single
 
     environment:
       - DISPLAY=${DISPLAY}
