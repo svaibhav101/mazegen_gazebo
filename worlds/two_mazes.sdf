@@ -2,15 +2,15 @@
 <!--
   Example world: two mazes side by side.
 
-  japan1980  starts at origin (0, 0, 0).
-  america2013 is offset +3 m along X so the two 16x16 grids don't overlap
+  alljapan1980  starts at origin (0, 0, 0).
+  allamerica2013 is offset +3 m along X so the two 16×16 grids don't overlap
   (16 cells × 0.18 m/cell = 2.88 m per side; 3 m gives a comfortable gap).
 
-  Services available after loading:
-    /mazegen/japan1980/spawn_pose      ignition.msgs.Pose
-    /mazegen/japan1980/goal_poses      ignition.msgs.Pose_V
-    /mazegen/america2013/spawn_pose    ignition.msgs.Pose
-    /mazegen/america2013/goal_poses    ignition.msgs.Pose_V
+  Maze services (ignition transport):
+    /mazegen/alljapan1980/spawn_pose       ignition.msgs.Pose
+    /mazegen/alljapan1980/goal_poses       ignition.msgs.Pose_V
+    /mazegen/allamerica2013/spawn_pose     ignition.msgs.Pose
+    /mazegen/allamerica2013/goal_poses     ignition.msgs.Pose_V
 -->
 <sdf version="1.9">
   <world name="two_mazes_world">
@@ -31,6 +31,8 @@
       name="ignition::gazebo::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
+    <plugin filename="ignition-gazebo-imu-system"
+      name="ignition::gazebo::systems::Imu" />
 
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>

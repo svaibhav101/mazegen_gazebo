@@ -77,13 +77,13 @@ namespace
     // Outer boundary walls must all be present.
     for (std::size_t c = 0; c < m.cols; ++c)
     {
-      Check(m.hWall[c][0],       "south outer wall present");
-      Check(m.hWall[c][m.rows],  "north outer wall present");
+      Check(m.hWall[c][0], "south outer wall present");
+      Check(m.hWall[c][m.rows], "north outer wall present");
     }
     for (std::size_t r = 0; r < m.rows; ++r)
     {
-      Check(m.vWall[0][r],       "west outer wall present");
-      Check(m.vWall[m.cols][r],  "east outer wall present");
+      Check(m.vWall[0][r], "west outer wall present");
+      Check(m.vWall[m.cols][r], "east outer wall present");
     }
 
     std::filesystem::remove(path);
@@ -98,7 +98,8 @@ namespace
     crlf += "\n\n";
     for (const char *p = kMaze3x3; *p; ++p)
     {
-      if (*p == '\n') crlf += '\r';
+      if (*p == '\n')
+        crlf += '\r';
       crlf += *p;
     }
     crlf += "\n  \n";
@@ -136,7 +137,8 @@ namespace
     auto has = [&](int c, int r)
     {
       for (const auto &g : m.goalCells)
-        if (g == std::make_pair(c, r)) return true;
+        if (g == std::make_pair(c, r))
+          return true;
       return false;
     };
     Check(has(1, 0) && has(0, 1) && has(1, 1), "all three goal cells found");
@@ -156,15 +158,24 @@ namespace
         ParseMazeFile(path);
         std::filesystem::remove(path);
       }
-      catch (const std::exception &) { threw = true; }
+      catch (const std::exception &)
+      {
+        threw = true;
+      }
       Check(threw, "even line count is rejected");
     }
 
     // Missing file is rejected.
     {
       bool threw = false;
-      try { ParseMazeFile("/nonexistent/path/to/maze.txt"); }
-      catch (const std::exception &) { threw = true; }
+      try
+      {
+        ParseMazeFile("/nonexistent/path/to/maze.txt");
+      }
+      catch (const std::exception &)
+      {
+        threw = true;
+      }
       Check(threw, "missing file is rejected");
     }
 
@@ -177,7 +188,10 @@ namespace
         ParseMazeFile(path);
         std::filesystem::remove(path);
       }
-      catch (const std::exception &) { threw = true; }
+      catch (const std::exception &)
+      {
+        threw = true;
+      }
       Check(threw, "single line (< 3) is rejected");
     }
 
@@ -186,12 +200,15 @@ namespace
       bool threw = false;
       try
       {
-        // Header has only one 'o' → postCount < 2.
+        // Header has only one 'o' -> postCount < 2.
         const auto path = WriteTemp("o \n| \no \n");
         ParseMazeFile(path);
         std::filesystem::remove(path);
       }
-      catch (const std::exception &) { threw = true; }
+      catch (const std::exception &)
+      {
+        threw = true;
+      }
       Check(threw, "header with < 2 posts is rejected");
     }
   }
@@ -217,8 +234,14 @@ namespace
     const auto path = WriteTemp(src);
     bool threw = false;
     Maze m;
-    try { m = ParseMazeFile(path); }
-    catch (const std::exception &) { threw = true; }
+    try
+    {
+      m = ParseMazeFile(path);
+    }
+    catch (const std::exception &)
+    {
+      threw = true;
+    }
 
     Check(!threw, "no-S maze does not throw");
     Check(m.cols == 2 && m.rows == 2, "no-S maze has correct dimensions");
@@ -250,8 +273,14 @@ namespace
     const auto path = WriteTemp(src);
     bool threw = false;
     Maze m;
-    try { m = ParseMazeFile(path); }
-    catch (const std::exception &) { threw = true; }
+    try
+    {
+      m = ParseMazeFile(path);
+    }
+    catch (const std::exception &)
+    {
+      threw = true;
+    }
 
     Check(!threw, "no-G maze does not throw");
     Check(m.goalCells.empty(), "no-G maze has empty goalCells");
@@ -279,15 +308,21 @@ namespace
     const auto path = WriteTemp(src);
     bool threw = false;
     Maze m;
-    try { m = ParseMazeFile(path); }
-    catch (const std::exception &) { threw = true; }
+    try
+    {
+      m = ParseMazeFile(path);
+    }
+    catch (const std::exception &)
+    {
+      threw = true;
+    }
 
     Check(!threw, "non-square maze (4x2) does not throw");
     Check(m.cols == 4, "non-square maze has 4 cols");
     Check(m.rows == 2, "non-square maze has 2 rows");
-    Check(m.hWall.size()    == 4, "hWall outer dim == cols");
+    Check(m.hWall.size() == 4, "hWall outer dim == cols");
     Check(m.hWall[0].size() == 3, "hWall inner dim == rows+1");
-    Check(m.vWall.size()    == 5, "vWall outer dim == cols+1");
+    Check(m.vWall.size() == 5, "vWall outer dim == cols+1");
     Check(m.vWall[0].size() == 2, "vWall inner dim == rows");
 
     // Start: col 0, row 1 (top-left cell).
@@ -315,11 +350,17 @@ namespace
     const auto path = WriteTemp(src);
     bool threw = false;
     Maze m;
-    try { m = ParseMazeFile(path); }
-    catch (const std::exception &) { threw = true; }
+    try
+    {
+      m = ParseMazeFile(path);
+    }
+    catch (const std::exception &)
+    {
+      threw = true;
+    }
 
-    Check(!threw,                        "1x1 maze does not throw");
-    Check(m.cols == 1 && m.rows == 1,    "1x1 maze has 1 col, 1 row");
+    Check(!threw, "1x1 maze does not throw");
+    Check(m.cols == 1 && m.rows == 1, "1x1 maze has 1 col, 1 row");
     Check(m.startCol == 0 && m.startRow == 0, "1x1 start is (0,0)");
     // All four outer walls must be set.
     Check(m.hWall[0][0] && m.hWall[0][1], "1x1 south and north outer walls");
