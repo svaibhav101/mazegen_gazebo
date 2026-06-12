@@ -66,6 +66,7 @@ namespace mazegen
   ///   /mazegen/<model_name>/goal_poses  -- ignition::msgs::Pose_V
   ///     One Pose per goal cell (position only, orientation identity),
   ///     in the order they appear in the maze file.
+  ///
   class MazegenPlugin
       : public ignition::gazebo::System,
         public ignition::gazebo::ISystemConfigure,

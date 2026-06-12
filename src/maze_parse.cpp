@@ -1,5 +1,6 @@
 #include "maze_parse.h"
 
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -85,7 +86,7 @@ namespace mazegen
       const std::string &L = lines[first + tr]; // offset into untrimmed vector
       if ((tr % 2) == 0)
       {
-        // Post row: tr == 0 → latitude r == rows (north outer edge).
+        // Post row: tr == 0 -> latitude r == rows (north outer edge).
         std::size_t r = m.rows - (tr / 2);
         for (std::size_t c = 0; c < m.cols; ++c)
         {
@@ -95,7 +96,7 @@ namespace mazegen
       }
       else
       {
-        // Wall row: tr == 1 → cell row == rows - 1 (top-most cell row).
+        // Wall row: tr == 1 -> cell row == rows - 1 (top-most cell row).
         std::size_t row = m.rows - 1 - (tr / 2);
         for (std::size_t c = 0; c <= m.cols; ++c)
         {
