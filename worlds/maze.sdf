@@ -78,6 +78,14 @@
       <wall_color>1 1 1</wall_color>            <!-- R G B, range [0, 1] -->
       <cap_color>0.9 0.05 0.05</cap_color>      <!-- R G B, range [0, 1] -->
       <origin>0.0 0.0 0.0 0.0 0.0 0.0</origin>  <!-- x y z (m)  roll pitch yaw (rad) -->
+
+      <!-- Optional: per-cell floor tile colors for path visualization.
+           x/y are 0-indexed from the south-west corner of the maze.
+           These can also be set at runtime via the set_tile_colors service.
+           Example: color a planned path green -->
+      <!-- <tile_color x="0" y="0">0.0 1.0 0.0</tile_color> -->
+      <tile_color x="13" y="6">0.0 1.0 0.0</tile_color>    <!-- R G B A, range [0, 1] -->
+      <tile_color x="3" y="14">0.0 0.8 0.2</tile_color>    <!-- R G B A, range [0, 1] -->
     </plugin>
 
   </world>

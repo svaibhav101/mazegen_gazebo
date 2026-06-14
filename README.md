@@ -373,11 +373,11 @@ publisher.publish(twist)
 
 | Signal | Direction | ROS 2 topic / type |
 |---|---|---|
-| IR array (5 rays) | Ign → ROS | `/micromouse/<robot>/ir` - `sensor_msgs/LaserScan` |
-| IMU (100 Hz) | Ign → ROS | `/micromouse/<robot>/imu` - `sensor_msgs/Imu` |
-| Wheel odometry | Ign → ROS | `/micromouse/<robot>/odom` - `nav_msgs/Odometry` |
-| Wheel encoders | Ign → ROS | `/world/<world>/model/<robot>/joint_state` - `sensor_msgs/JointState` |
-| Drive command | ROS → Ign | `/<robot>/cmd_vel` - `geometry_msgs/Twist` |
+| IR array (5 rays) | Ign -> ROS | `/micromouse/<robot>/ir` - `sensor_msgs/LaserScan` |
+| IMU (100 Hz) | Ign -> ROS | `/micromouse/<robot>/imu` - `sensor_msgs/Imu` |
+| Wheel odometry | Ign -> ROS | `/micromouse/<robot>/odom` - `nav_msgs/Odometry` |
+| Wheel encoders | Ign -> ROS | `/world/<world>/model/<robot>/joint_state` - `sensor_msgs/JointState` |
+| Drive command | ROS -> Ign | `/<robot>/cmd_vel` - `geometry_msgs/Twist` |
 
 IR ray index layout: `[0] right · [1] front-right · [2] front-centre · [3] front-left · [4] left`
 

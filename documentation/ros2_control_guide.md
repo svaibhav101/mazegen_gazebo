@@ -398,9 +398,406 @@ def generate_launch_description():
 
 ---
 
-## 5. Topic / service reference
+## 5. Coloring floor tiles for path visualization
 
-| What | Direction | Ignition topic | ROS 2 type |
+### 5.1 Design: why the Marker API instead of a service
+
+The previous approach (spawning/despawning a tile model via a service) is
+unsuitable for online planning because:
+
+- Each update triggers a full Gazebo model lifecycle (spawn -> ECM poll -> confirm)
+- There is a multi-tick delay before the change is visible
+- Rapid updates queue up and drift behind the planner
+
+The correct tool is the **Ignition Marker API** (`/marker_array` topic,
+`ignition.msgs.Marker_V`). It is a fire-and-forget pub/sub topic with no
+handshake — Gazebo renders the update in the next frame. Each marker has a
+stable numeric ID and supports `ADD_MODIFY` (upsert), so you can update any
+cell without touching the others.
+
+**Design for a 16×16 arena:**
+
+| Parameter | Value |
+|---|---|
+| Topic | `/marker_array` (pub, no bridge needed) |
+| Namespace | `mazegen/<model_name>/tiles` |
+| Marker ID | `y * cols + x` — stable per-cell identifier |
+| Shape | `BOX`, sized to the cell interior (cell_size − wall_thickness) |
+| Position | World-frame centre of the cell, 1 mm above the floor |
+| Action | `ADD_MODIFY` — creates on first publish, updates in-place thereafter |
+| Sentinel | Set `color.a = 0.0` to make a cell invisible without deleting the marker |
+
+**Publish the full arena (cols × rows markers) in one `Marker_V` message every
+planning tick.** The sentinel alpha means you never need DELETE — just flip
+alpha between 0 and 1 to show or hide a cell. A full 16×16 update is 256
+markers in a single UDP datagram, and Gazebo renders it atomically.
+
+> **Static tiles** declared with `<tile_color x="…" y="…">` in the SDF are
+> still supported and are baked into the maze model at load time. They are
+> independent of the marker overlay and are never affected by it.
+
+---
+
+### 5.2 Marker geometry reference
+
+For the default maze parameters:
+
+| Param | Value | Meaning |
+|---|---|---|
+| `cell_size` | 0.18 m | Grid pitch |
+| `wall_thickness` | 0.012 m | Post/wall width |
+| Tile XY size | 0.168 m × 0.168 m | `cell_size − wall_thickness` |
+| Tile Z size | 0.001 m | 1 mm slab |
+| Tile Z centre | 0.0005 m + 1e-4 | Floating 0.1 mm above floor |
+| Cell centre X | `(x + 0.5) × cell_size + origin_x` | World frame |
+| Cell centre Y | `(y + 0.5) × cell_size + origin_y` | World frame |
+
+---
+
+### 5.3 Python
+
+```python
+#!/usr/bin/env python3
+"""
+Publish full-arena tile colors every planning tick via the Ignition Marker API.
+
+The /marker_array topic is handled natively by Gazebo.
+Publish from any process that has ignition-transport available.
+"""
+import rclpy
+from rclpy.node import Node
+
+from ignition.transport import Node as IgnNode
+from ignition.msgs.marker_v_pb2 import Marker_V
+from ignition.msgs.marker_pb2 import Marker
+from ignition.msgs.color_pb2 import Color
+
+
+MAZE_NAME      = 'allamerica2013'
+COLS           = 16
+ROWS           = 16
+CELL_SIZE      = 0.18        # metres
+WALL_THICKNESS = 0.012       # metres
+ORIGIN_X       = 0.0         # maze world-frame X offset
+ORIGIN_Y       = 0.0         # maze world-frame Y offset
+
+TILE_SIZE  = CELL_SIZE - WALL_THICKNESS   # 0.168 m
+TILE_H     = 0.001                        # 1 mm slab
+TILE_Z     = TILE_H * 0.5 + 1e-4         # centre height above floor
+NS         = f'mazegen/{MAZE_NAME}/tiles'
+
+
+def _cell_id(x: int, y: int) -> int:
+    return y * COLS + x
+
+
+def _make_marker(x: int, y: int,
+                 r: float, g: float, b: float,
+                 a: float, intensity: float) -> Marker:
+    """Build one BOX marker for cell (x, y).
+
+    Args:
+        r, g, b:   RGB color in [0.0, 1.0].
+        a:         Alpha. Set 0.0 to make the cell invisible (sentinel).
+        intensity: Emissive (self-glow) strength in [0.0, 1.0].
+                   0.0 = tile color determined purely by scene lighting (dim in shadows).
+                   1.0 = tile glows at full color regardless of lighting.
+                   0.5 = default, balanced appearance under Gazebo's directional light.
+    """
+    m = Marker()
+    m.ns        = NS
+    m.id        = _cell_id(x, y)
+    m.action    = Marker.ADD_MODIFY
+    m.type      = Marker.BOX
+
+    m.pose.position.x    = ORIGIN_X + (x + 0.5) * CELL_SIZE
+    m.pose.position.y    = ORIGIN_Y + (y + 0.5) * CELL_SIZE
+    m.pose.position.z    = TILE_Z
+    m.pose.orientation.w = 1.0
+
+    m.scale.x = TILE_SIZE
+    m.scale.y = TILE_SIZE
+    m.scale.z = TILE_H
+
+    m.material.ambient.r  = r;  m.material.ambient.g  = g
+    m.material.ambient.b  = b;  m.material.ambient.a  = a
+    m.material.diffuse.r  = r;  m.material.diffuse.g  = g
+    m.material.diffuse.b  = b;  m.material.diffuse.a  = a
+    m.material.emissive.r = r * intensity
+    m.material.emissive.g = g * intensity
+    m.material.emissive.b = b * intensity
+    m.material.emissive.a = a
+
+    return m
+
+
+class ArenaVisualizer(Node):
+    """Publishes the full arena tile overlay on every call to update()."""
+
+    def __init__(self):
+        super().__init__('arena_visualizer')
+        self._ign = IgnNode()
+        self._pub = self._ign.advertise('/marker_array', Marker_V)
+
+        # Internal color grid: (r, g, b, a, intensity) per cell, default transparent
+        self._grid: dict[tuple[int, int], tuple[float, float, float, float, float]] = {}
+
+    def set_cell(self, x: int, y: int,
+                 r: float, g: float, b: float,
+                 a: float = 1.0, intensity: float = 0.5):
+        """Set the color of one cell. Call update() to push to Gazebo.
+
+        Args:
+            x, y:      Cell indices (0-based, south-west origin).
+            r, g, b:   RGB in [0.0, 1.0].
+            a:         Alpha (0.0 = invisible sentinel).
+            intensity: Emissive glow strength in [0.0, 1.0].
+        """
+        self._grid[(x, y)] = (r, g, b, a, intensity)
+
+    def clear_cell(self, x: int, y: int):
+        """Make one cell invisible (sentinel alpha = 0)."""
+        self._grid[(x, y)] = (0.0, 0.0, 0.0, 0.0, 0.0)
+
+    def clear_all(self):
+        """Make all cells invisible."""
+        for y in range(ROWS):
+            for x in range(COLS):
+                self._grid[(x, y)] = (0.0, 0.0, 0.0, 0.0, 0.0)
+
+    def update(self):
+        """Push the full arena (COLS × ROWS markers) to Gazebo in one message."""
+        msg = Marker_V()
+        for y in range(ROWS):
+            for x in range(COLS):
+                r, g, b, a, intensity = self._grid.get((x, y), (0.0, 0.0, 0.0, 0.0, 0.0))
+                msg.marker.append(_make_marker(x, y, r, g, b, a, intensity))
+        self._pub.publish(msg)
+
+
+def main():
+    rclpy.init()
+    vis = ArenaVisualizer()
+
+    # --- Example: paint a planned path, updated every tick ---
+    path    = [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2), (3, 2), (4, 2)]
+    visited = {(0, 0), (1, 0), (0, 1)}
+
+    vis.clear_all()
+    for x, y in visited:
+        vis.set_cell(x, y, 0.2, 0.4, 0.8, intensity=0.3)  # blue, dim
+    for i, (x, y) in enumerate(path):
+        if i == 0:
+            vis.set_cell(x, y, 1.0, 0.5, 0.0, intensity=1.0)  # orange, full glow
+        else:
+            vis.set_cell(x, y, 0.0, 0.8, 0.2, intensity=0.6)  # green, moderate glow
+
+    vis.update()   # one message, 256 markers, renders next Gazebo frame
+
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+### 5.4 C++
+
+```cpp
+/**
+ * ArenaVisualizer — publish full-arena tile colors via Ignition Marker API.
+ *
+ * One Marker_V message per planning tick, COLS*ROWS markers.
+ * alpha = 0.0 is the sentinel for "invisible cell" (no DELETE needed).
+ */
+#include <array>
+#include <string>
+
+#include <rclcpp/rclcpp.hpp>
+#include <ignition/transport/Node.hh>
+#include <ignition/msgs/marker_v.pb.h>
+#include <ignition/msgs/marker.pb.h>
+
+static constexpr int    COLS           = 16;
+static constexpr int    ROWS           = 16;
+static constexpr double CELL_SIZE      = 0.18;
+static constexpr double WALL_THICKNESS = 0.012;
+static constexpr double ORIGIN_X       = 0.0;
+static constexpr double ORIGIN_Y       = 0.0;
+
+static constexpr double TILE_SIZE = CELL_SIZE - WALL_THICKNESS;  // 0.168 m
+static constexpr double TILE_H    = 0.001;
+static constexpr double TILE_Z    = TILE_H * 0.5 + 1e-4;
+
+/// Per-cell color + intensity.
+/// intensity: emissive (self-glow) strength in [0.0, 1.0].
+///   0.0 = color determined by scene lighting only (dim in shadows).
+///   1.0 = tile glows at full color regardless of lighting.
+///   0.5 = balanced default under Gazebo's directional light.
+struct RGBA { float r, g, b, a, intensity; };
+
+class ArenaVisualizer : public rclcpp::Node
+{
+public:
+  explicit ArenaVisualizer(const std::string &maze_name)
+  : Node("arena_visualizer"),
+    ns_("mazegen/" + maze_name + "/tiles")
+  {
+    pub_ = ign_.Advertise<ignition::msgs::Marker_V>("/marker_array");
+    grid_.fill({0.f, 0.f, 0.f, 0.f, 0.f});   // all transparent
+  }
+
+  /// Set the color of one cell.
+  /// intensity in [0.0, 1.0] controls emissive glow strength.
+  void setCell(int x, int y,
+               float r, float g, float b,
+               float a = 1.f, float intensity = 0.5f)
+  {
+    grid_[y * COLS + x] = {r, g, b, a, intensity};
+  }
+
+  void clearCell(int x, int y) { grid_[y * COLS + x] = {0, 0, 0, 0, 0}; }
+
+  void clearAll() { grid_.fill({0.f, 0.f, 0.f, 0.f, 0.f}); }
+
+  /// Push the full arena (COLS × ROWS markers) to Gazebo in one message.
+  void update()
+  {
+    ignition::msgs::Marker_V msg;
+    for (int y = 0; y < ROWS; ++y)
+    {
+      for (int x = 0; x < COLS; ++x)
+      {
+        const RGBA &c = grid_[y * COLS + x];
+        auto *m = msg.add_marker();
+
+        m->set_ns(ns_);
+        m->set_id(y * COLS + x);
+        m->set_action(ignition::msgs::Marker::ADD_MODIFY);
+        m->set_type(ignition::msgs::Marker::BOX);
+
+        auto *pos = m->mutable_pose()->mutable_position();
+        pos->set_x(ORIGIN_X + (x + 0.5) * CELL_SIZE);
+        pos->set_y(ORIGIN_Y + (y + 0.5) * CELL_SIZE);
+        pos->set_z(TILE_Z);
+        m->mutable_pose()->mutable_orientation()->set_w(1.0);
+
+        m->mutable_scale()->set_x(TILE_SIZE);
+        m->mutable_scale()->set_y(TILE_SIZE);
+        m->mutable_scale()->set_z(TILE_H);
+
+        auto *mat = m->mutable_material();
+        auto setRGBA = [&](auto *col) {
+          col->set_r(c.r); col->set_g(c.g);
+          col->set_b(c.b); col->set_a(c.a);
+        };
+        setRGBA(mat->mutable_ambient());
+        setRGBA(mat->mutable_diffuse());
+        mat->mutable_emissive()->set_r(c.r * c.intensity);
+        mat->mutable_emissive()->set_g(c.g * c.intensity);
+        mat->mutable_emissive()->set_b(c.b * c.intensity);
+        mat->mutable_emissive()->set_a(c.a);
+      }
+    }
+    pub_.Publish(msg);
+  }
+
+private:
+  ignition::transport::Node ign_;
+  ignition::transport::Node::Publisher pub_;
+  std::string ns_;
+  std::array<RGBA, COLS * ROWS> grid_;
+};
+
+
+int main(int argc, char **argv)
+{
+  rclcpp::init(argc, argv);
+  auto vis = std::make_shared<ArenaVisualizer>("allamerica2013");
+
+  vis->clearAll();
+
+  // Explored cells — dim blue, low glow (visible but not distracting)
+  for (auto [x, y] : std::initializer_list<std::pair<int,int>>{{0,0},{1,0},{0,1}})
+    vis->setCell(x, y, 0.2f, 0.4f, 0.8f, 1.f, 0.3f);
+
+  // Planned path — bright green, moderate glow
+  for (auto [x, y] : std::initializer_list<std::pair<int,int>>{{1,0},{2,0},{2,1},{2,2}})
+    vis->setCell(x, y, 0.0f, 0.8f, 0.2f, 1.f, 0.6f);
+
+  // Current robot position — orange, full glow so it pops
+  vis->setCell(0, 0, 1.0f, 0.5f, 0.0f, 1.f, 1.0f);
+
+  vis->update();   // one Marker_V, 256 markers, renders next Gazebo frame
+
+  rclcpp::shutdown();
+  return 0;
+}
+```
+
+#### CMakeLists.txt additions
+
+```cmake
+find_package(ignition-transport11 REQUIRED)
+find_package(ignition-msgs8 REQUIRED)
+
+add_executable(arena_visualizer src/arena_visualizer.cpp)
+ament_target_dependencies(arena_visualizer rclcpp)
+target_link_libraries(arena_visualizer
+  ignition-transport11::ignition-transport11
+  ignition-msgs8::ignition-msgs8)
+```
+
+---
+
+### 5.5 Integrating into an online planner
+
+Call `update()` at the end of every planning iteration — it is cheap (one
+serialized protobuf message, no ACK, no round-trip):
+
+```python
+while planning:
+    visited, path, robot_cell = planner.step()
+
+    vis.clear_all()
+    for x, y in visited:
+        vis.set_cell(x, y, 0.2, 0.4, 0.8, intensity=0.3)   # blue, dim
+    for x, y in path:
+        vis.set_cell(x, y, 0.0, 0.8, 0.2, intensity=0.6)   # green, moderate
+    vis.set_cell(*robot_cell, 1.0, 0.5, 0.0, intensity=1.0) # orange, full glow
+
+    vis.update()   # push full arena
+```
+
+---
+
+### 5.6 Suggested color conventions
+
+| Meaning | R | G | B | Alpha | Intensity |
+|---|---|---|---|---|---|
+| Robot current cell | 1.0 | 0.5 | 0.0 | 1.0 | 1.0 |
+| Planned path | 0.0 | 0.8 | 0.2 | 1.0 | 0.6 |
+| Explored / visited | 0.2 | 0.4 | 0.8 | 1.0 | 0.3 |
+| Frontier | 0.8 | 0.8 | 0.0 | 1.0 | 0.5 |
+| Dead end | 0.8 | 0.1 | 0.1 | 1.0 | 0.2 |
+| Invisible (sentinel) | any | any | any | 0.0 | any |
+
+**Intensity** (`0.0`–`1.0`) scales the emissive channel — the fraction of the
+tile's color that is self-lit regardless of scene lighting. Use high intensity
+for cells that must stand out (robot position), low intensity for background
+information (explored cells) so they don't visually compete with the path.
+
+> The start cell (blue) and goal cells (orange) are baked into the maze model
+> as static SDF geometry. Setting a marker over them will visually override
+> them since markers float 0.1 mm above the floor.
+
+---
+
+## 6. Topic / service reference
+
+| What | Direction | Ignition topic / service | ROS 2 type |
 |---|---|---|---|
 | IR array (5 rays) | Ign -> ROS | `/micromouse/<robot>/ir` | `sensor_msgs/LaserScan` |
 | IR point cloud | Ign -> ROS | `/micromouse/<robot>/ir/points` | `sensor_msgs/PointCloud2` |
@@ -412,12 +809,13 @@ def generate_launch_description():
 | Drive command | ROS -> Ign | `/<robot>/cmd_vel` | `geometry_msgs/Twist` |
 | Start pose | Ign service | `/mazegen/<maze_name>/spawn_pose` | `ignition.msgs.Pose` |
 | Goal poses | Ign service | `/mazegen/<maze_name>/goal_poses` | `ignition.msgs.Pose_V` |
+| Floor tile overlay | Planner -> Ign | `/marker_array` | `ignition.msgs.Marker_V` |
 
 Where `<robot>` = `<model_name>_robot` and `<maze_name>` = `<model_name>`.
 
 ---
 
-## 6. Minimal algorithm node skeleton
+## 7. Minimal algorithm node skeleton
 
 ```python
 #!/usr/bin/env python3
@@ -531,7 +929,7 @@ if __name__ == '__main__':
 
 ---
 
-## 7. Coordinate conventions
+## 8. Coordinate conventions
 
 - World frame: **+X east, +Y north** (matches Gazebo default top-down view).
 - Robot body frame: **+X forward, +Y left, +Z up**.
@@ -540,14 +938,14 @@ if __name__ == '__main__':
 
 ---
 
-## 8. References
+## 9. References
 
 ### ROS 2 & bridge
 
 - **[ROS 2 Humble](https://docs.ros.org/en/humble/)** - target ROS 2 distribution; all package names and API examples use Humble.
 - **[ros_gz_bridge](https://github.com/gazebosim/ros_gz)** - ROS–Ignition bridge providing `parameter_bridge` and the `@` topic mapping syntax used throughout this guide.
 - **[geometry_msgs/Twist](https://docs.ros2.org/humble/api/geometry_msgs/msg/Twist.html)** - drive command message type (`linear.x` m/s, `angular.z` rad/s).
-- **[sensor_msgs/LaserScan](https://docs.ros2.org/humble/api/sensor_msgs/msg/LaserScan.html)** - IR sensor array message; `ranges[]` indexed right→left.
+- **[sensor_msgs/LaserScan](https://docs.ros2.org/humble/api/sensor_msgs/msg/LaserScan.html)** - IR sensor array message; `ranges[]` indexed right->left.
 - **[nav_msgs/Odometry](https://docs.ros2.org/humble/api/nav_msgs/msg/Odometry.html)** - wheel-model pose estimate published by the `DiffDrive` plugin.
 
 ### Ignition Gazebo
