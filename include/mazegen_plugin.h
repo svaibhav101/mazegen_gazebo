@@ -1,6 +1,7 @@
 #ifndef MAZEGEN_PLUGIN_H_
 #define MAZEGEN_PLUGIN_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -11,62 +12,67 @@
 #include <sdf/Element.hh>
 
 /// \file mazegen_plugin.h
-/// \brief Public header for the `MazegenPlugin` Ignition Gazebo plugin.
+/// \brief World system plugin that spawns micromouse mazes in Ignition Gazebo.
 
-/// \namespace mazegen
-/// \brief All public symbols exposed by the mazegen plugin.
 namespace mazegen
 {
-  /// \brief World system plugin for Ignition Gazebo Fortress that builds one
-  /// or more micromouse-style mazes from text files (micromouseonline format).
+  /// \brief World system plugin for Ignition Gazebo Fortress.
   ///
-  /// Single-maze usage:
-  /// \code
-  /// <plugin filename="libmazegen_plugin.so"
-  ///         name="mazegen::MazegenPlugin">
-  ///   <maze_file>mazes/japan2007ef.txt</maze_file>
-  ///   <model_name>japan2007ef</model_name>
-  ///   <cell_size>0.18</cell_size>
+  /// Loads one or more micromouse-style mazes from text files (micromouseonline
+  /// format) and spawns them as static SDF models via the world /create service.
+  ///
+  /// ### SDF configuration
+  ///
+  /// **Single-maze (flat) form:**
+  /// \code{.xml}
+  /// <plugin name="mazegen::MazegenPlugin" filename="libmazegen_plugin.so">
+  ///   <maze_file>path/to/maze.txt</maze_file>
+  ///   <model_name>maze</model_name>           <!-- optional -->
+  ///   <origin>0 0 0 0 0 0</origin>            <!-- optional x y z r p y -->
+  ///   <cell_size>0.18</cell_size>             <!-- optional; metres -->
   ///   <wall_thickness>0.012</wall_thickness>
   ///   <wall_height>0.05</wall_height>
   ///   <wall_color>1 1 1</wall_color>
   ///   <cap_color>0.9 0.05 0.05</cap_color>
-  ///   <origin>0.0 0.0 0.0 0.0 0.0 0.0</origin>
   /// </plugin>
   /// \endcode
   ///
-  /// Multi-maze usage (one <maze> block per maze):
-  /// \code
-  /// <plugin filename="libmazegen_plugin.so"
-  ///         name="mazegen::MazegenPlugin">
-  ///   <!-- Shared geometry/colour params (all optional) -->
+  /// **Multi-maze form** (shared geometry overrides apply to all blocks):
+  /// \code{.xml}
+  /// <plugin name="mazegen::MazegenPlugin" filename="libmazegen_plugin.so">
   ///   <cell_size>0.18</cell_size>
-  ///   <wall_color>1 1 1</wall_color>
-  ///   <cap_color>0.9 0.05 0.05</cap_color>
-  ///
   ///   <maze>
-  ///     <file>mazes/alljapan-001-1980.txt</file>
-  ///     <model_name>japan1980</model_name>   <!-- optional, default: maze_0 -->
+  ///     <file>path/to/maze_a.txt</file>
+  ///     <model_name>maze_a</model_name>
   ///     <origin>0 0 0 0 0 0</origin>
   ///   </maze>
   ///   <maze>
-  ///     <file>mazes/allamerica2013.txt</file>
-  ///     <model_name>america2013</model_name>
-  ///     <origin>5 0 0 0 0 0</origin>
+  ///     <file>path/to/maze_b.txt</file>
+  ///     <origin>2 0 0 0 0 1.5707</origin>
   ///   </maze>
   /// </plugin>
   /// \endcode
   ///
-  /// For each loaded maze the plugin advertises two persistent transport services:
+  /// ### Transport services
   ///
-  ///   /mazegen/<model_name>/spawn_pose  -- ignition::msgs::Pose
-  ///     Center of the start cell in world coordinates; yaw from the first
-  ///     open side of the start cell (east -> north -> west -> south).
+  /// For each loaded maze the plugin advertises two persistent request/reply
+  /// services:
   ///
-  ///   /mazegen/<model_name>/goal_poses  -- ignition::msgs::Pose_V
-  ///     One Pose per goal cell (position only, orientation identity),
-  ///     in the order they appear in the maze file.
+  /// | Service                                  | Message type               |
+  /// |------------------------------------------|----------------------------|
+  /// | /mazegen/\<model_name\>/spawn_pose       | ignition::msgs::Pose       |
+  /// | /mazegen/\<model_name\>/goal_poses       | ignition::msgs::Pose_V     |
   ///
+  /// ### Runtime tile visualization
+  ///
+  /// Floor tile colours can be updated at runtime without plugin involvement
+  /// by publishing to the standard Ignition marker topic:
+  ///
+  ///   /marker_array  —  ignition::msgs::Marker_V
+  ///
+  /// Use namespace "mazegen/\<model_name\>/tiles" and marker IDs of
+  /// (row * cols + col) so each cell maps to a stable, updateable marker.
+  /// Set alpha = 0.0 for cells that should be invisible.
   class MazegenPlugin
       : public ignition::gazebo::System,
         public ignition::gazebo::ISystemConfigure,
@@ -76,39 +82,39 @@ namespace mazegen
     MazegenPlugin() = default;
     ~MazegenPlugin() override = default;
 
+    /// \brief Parse SDF, build maze SDF strings, write temp files, register
+    ///        transport services.  The actual /create calls are deferred to
+    ///        PreUpdate() because the transport graph is not fully connected
+    ///        until Configure() returns.
     void Configure(const ignition::gazebo::Entity &_entity,
                    const std::shared_ptr<const sdf::Element> &_sdf,
                    ignition::gazebo::EntityComponentManager &_ecm,
                    ignition::gazebo::EventManager &_eventMgr) override;
 
-    /// \brief Spawns all pending mazes on the first simulation tick, when the
-    /// world's /create transport service is guaranteed to be reachable.
+    /// \brief Issue /create service calls and poll the ECM until each model
+    ///        appears, then clean up the temporary SDF files.
     void PreUpdate(const ignition::gazebo::UpdateInfo &_info,
                    ignition::gazebo::EntityComponentManager &_ecm) override;
 
   private:
-    /// \brief Per-maze runtime state.
+    /// \brief Per-maze bookkeeping for the deferred spawn handshake.
     struct MazeInstance
     {
-      std::string modelName;
-      std::string pendingSdfFile;
-      std::string createService;
-      bool requested{false};
-      bool done{false};
-      unsigned pollTicks{0};
-      ignition::math::Pose3d spawnPose;
-      ignition::msgs::Pose_V goalPoses;
+      std::string modelName;            ///< Gazebo model name expected in the ECM.
+      std::string pendingSdfFile;       ///< Temp file path; cleared after spawn.
+      std::string createService;        ///< World /create service topic.
+      bool requested{false};            ///< True after /create has been called.
+      bool done{false};                 ///< True once the model appears in the ECM.
+      unsigned pollTicks{0};            ///< PreUpdate ticks spent waiting after /create.
+      ignition::math::Pose3d spawnPose; ///< Robot spawn pose in world frame.
+      ignition::msgs::Pose_V goalPoses; ///< Goal cell centres in world frame.
     };
 
-    /// \brief All maze instances parsed from Configure().
-    std::vector<MazeInstance> mazes_;
-
-    /// \brief Set to true only when Configure() fully succeeds for >=1 maze.
-    bool initialized_{false};
-
-    /// \brief Transport node kept alive for the duration of the plugin.
-    ignition::transport::Node node_;
+    std::vector<std::unique_ptr<MazeInstance>> mazes_; ///< All maze instances.
+    bool initialized_{false};                          ///< Set to true when at least one maze is ready.
+    ignition::transport::Node node_;                   ///< Shared transport node for all services.
   };
+
 } // namespace mazegen
 
 #endif /* MAZEGEN_PLUGIN_H_ */

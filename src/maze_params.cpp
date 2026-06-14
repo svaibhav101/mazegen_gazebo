@@ -1,3 +1,6 @@
+/// \file maze_params.cpp
+/// \brief Implementation of SDF parameter parsing helpers for mazegen.
+
 #include "maze_params.h"
 
 #include <filesystem>
@@ -14,9 +17,10 @@ namespace mazegen
   {
     if (std::filesystem::exists(_path))
       return _path;
+
     ignition::common::SystemPaths sp;
     sp.SetFilePathEnv("IGN_GAZEBO_RESOURCE_PATH");
-    std::string found = sp.FindFile(_path);
+    const std::string found = sp.FindFile(_path);
     return found.empty() ? _path : found;
   }
 
@@ -42,13 +46,44 @@ namespace mazegen
   {
     if (!_sdf->HasElement("origin"))
       return;
+
     std::istringstream ss(_sdf->Get<std::string>("origin"));
     double v[6] = {0, 0, 0, 0, 0, 0};
     for (int i = 0; i < 6; ++i)
       if (!(ss >> v[i]))
         break;
+
     _xyz = {v[0], v[1], v[2]};
     _rpy = {v[3], v[4], v[5]};
+  }
+
+  /// \brief Parse all \<tile_color\> children from an SDF element into \p _p.
+  ///
+  /// Each element must carry x and y attributes (column and row) and a body
+  /// value of three space-separated floats (R G B).  Elements missing either
+  /// attribute are silently skipped.
+  ///
+  /// \param[in]     _sdf SDF element to search for \<tile_color\> children.
+  /// \param[in,out] _p   Params whose tileColors map is populated.
+  static void ParseTileColors(const std::shared_ptr<const sdf::Element> &_sdf,
+                              Params &_p)
+  {
+    if (!_sdf->HasElement("tile_color"))
+      return;
+
+    auto elem = _sdf->GetElementImpl("tile_color");
+    while (elem)
+    {
+      if (elem->HasAttribute("x") && elem->HasAttribute("y"))
+      {
+        const int col = std::stoi(elem->GetAttribute("x")->GetAsString());
+        const int row = std::stoi(elem->GetAttribute("y")->GetAsString());
+        const ignition::math::Vector3d color =
+            elem->Get<ignition::math::Vector3d>("", ignition::math::Vector3d{1, 1, 1}).first;
+        _p.tileColors[{col, row}] = color;
+      }
+      elem = elem->GetNextElement("tile_color");
+    }
   }
 
   Params ReadSharedParams(const std::shared_ptr<const sdf::Element> &_sdf)
@@ -60,6 +95,7 @@ namespace mazegen
     p.postSize = GetDouble(_sdf, "post_size", p.wallThickness);
     p.wallColor = GetVec3(_sdf, "wall_color", p.wallColor);
     p.capColor = GetVec3(_sdf, "cap_color", p.capColor);
+    ParseTileColors(_sdf, p);
     return p;
   }
 
@@ -93,6 +129,7 @@ namespace mazegen
     p.wallColor = GetVec3(_maze, "wall_color", p.wallColor);
     p.capColor = GetVec3(_maze, "cap_color", p.capColor);
     GetPose(_maze, p.origin, p.rotation);
+    ParseTileColors(_maze, p);
     return p;
   }
 

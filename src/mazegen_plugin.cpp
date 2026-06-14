@@ -1,3 +1,6 @@
+/// \file mazegen_plugin.cpp
+/// \brief Implementation of MazegenPlugin — Configure and PreUpdate.
+
 #include "mazegen_plugin.h"
 #include "maze_params.h"
 #include "maze_parse.h"
@@ -29,15 +32,6 @@ IGNITION_ADD_PLUGIN(
 
 namespace mazegen
 {
-  // -------------------------------------------------------------------------
-  // Configure: parse SDF params, build maze SDF(s), write to temp files.
-  // The actual /create service calls are deferred to PreUpdate() because the
-  // transport graph isn't fully connected until Configure() returns.
-  //
-  // Two input formats are accepted:
-  //   Single: flat <maze_file> / <model_name> / <origin> / geometry params
-  //   Multi:  one or more <maze> child blocks, each with <file> and <origin>
-  // -------------------------------------------------------------------------
   void MazegenPlugin::Configure(
       const ignition::gazebo::Entity &_entity,
       const std::shared_ptr<const sdf::Element> &_sdf,
@@ -57,9 +51,12 @@ namespace mazegen
       ignerr << "MazegenPlugin: world has no Name component." << std::endl;
       return;
     }
-    const std::string createService =
-        "/world/" + nameComp->Data() + "/create";
+    const std::string createService = "/world/" + nameComp->Data() + "/create";
 
+    // Parse the list of maze parameter blocks from SDF.
+    // Two input formats are accepted:
+    //   Multi:  one or more <maze> child blocks, each with <file> and <origin>.
+    //   Single: flat <maze_file> / <model_name> / <origin> / geometry params.
     std::vector<Params> paramList;
 
     if (_sdf->HasElement("maze"))
@@ -90,6 +87,8 @@ namespace mazegen
       paramList.push_back(std::move(p));
     }
 
+    // Counter shared across Configure() calls to guarantee unique temp filenames
+    // even if the plugin is instantiated more than once in the same process.
     static std::atomic<unsigned> tmpCounter{0};
 
     for (const Params &p : paramList)
@@ -114,8 +113,9 @@ namespace mazegen
                 << resolved << "'" << std::endl;
       LogSpawnInfo(maze, p);
 
+      // Write the generated SDF to a temp file; the /create service reads it
+      // by filename rather than accepting an inline SDF string.
       const std::string sdfStr = BuildMazeSdf(maze, p);
-
       auto tmpPath = std::filesystem::temp_directory_path() /
                      ("mazegen_" + std::to_string(::getpid()) + "_" +
                       std::to_string(tmpCounter++) + ".sdf");
@@ -130,27 +130,31 @@ namespace mazegen
         f << sdfStr;
       }
 
-      MazeInstance inst;
-      inst.modelName = p.modelName;
-      inst.pendingSdfFile = tmpPath.string();
-      inst.createService = createService;
+      auto inst = std::make_unique<MazeInstance>();
+      inst->modelName = p.modelName;
+      inst->pendingSdfFile = tmpPath.string();
+      inst->createService = createService;
 
+      // Compute robot spawn pose from start cell position and open-side yaw.
       const auto startPos = CellCenter(maze.startCol, maze.startRow, p);
       std::string dir;
       const double yaw = SpawnYaw(maze, p, dir);
-      inst.spawnPose = ignition::math::Pose3d(
+      inst->spawnPose = ignition::math::Pose3d(
           startPos.X(), startPos.Y(), startPos.Z(), 0.0, 0.0, yaw);
 
       for (const auto &gc : maze.goalCells)
       {
         const auto pos = CellCenter(gc.first, gc.second, p);
-        ignition::msgs::Pose *entry = inst.goalPoses.add_pose();
+        ignition::msgs::Pose *entry = inst->goalPoses.add_pose();
         ignition::msgs::Set(entry,
-                            ignition::math::Pose3d(pos.X(), pos.Y(), pos.Z(), 0.0, 0.0, 0.0));
+                            ignition::math::Pose3d(
+                                pos.X(), pos.Y(), pos.Z(), 0.0, 0.0, 0.0));
       }
 
-      const ignition::math::Pose3d spawnPoseCopy = inst.spawnPose;
-      const ignition::msgs::Pose_V goalPosesCopy = inst.goalPoses;
+      // Advertise persistent request/reply services for spawn and goal poses.
+      // Capture by value so the lambdas remain valid after the loop iteration.
+      const ignition::math::Pose3d spawnPoseCopy = inst->spawnPose;
+      const ignition::msgs::Pose_V goalPosesCopy = inst->goalPoses;
 
       const std::string spawnSvc = "/mazegen/" + p.modelName + "/spawn_pose";
       const std::string goalSvc = "/mazegen/" + p.modelName + "/goal_poses";
@@ -170,9 +174,13 @@ namespace mazegen
       node_.Advertise(spawnSvc, spawnCb);
       node_.Advertise(goalSvc, goalCb);
 
-      std::cout << "[MazegenPlugin/" << p.modelName << "] services ready:"
-                << " " << spawnSvc
-                << " | " << goalSvc << std::endl;
+      std::cout << "[MazegenPlugin/" << p.modelName << "] maze size: "
+                << maze.cols << "x" << maze.rows
+                << "  marker ns: mazegen/" << p.modelName << "/tiles"
+                << "  marker IDs: 0.." << (maze.cols * maze.rows - 1)
+                << "  (id = y * " << maze.cols << " + x)" << std::endl;
+      std::cout << "[MazegenPlugin/" << p.modelName << "] services ready: "
+                << spawnSvc << " | " << goalSvc << std::endl;
 
       mazes_.push_back(std::move(inst));
     }
@@ -181,15 +189,6 @@ namespace mazegen
       initialized_ = true;
   }
 
-  // -------------------------------------------------------------------------
-  // PreUpdate runs every simulation tick.
-  //
-  // For each pending MazeInstance:
-  //   Tick 1  (requested == false): send the /create request.
-  //   Tick 2+ (requested == true):  poll ECM until the model appears, then
-  //                                  delete the temp file. Give up after
-  //                                  kMaxPollTicks to avoid a permanent leak.
-  // -------------------------------------------------------------------------
   void MazegenPlugin::PreUpdate(
       const ignition::gazebo::UpdateInfo & /*_info*/,
       ignition::gazebo::EntityComponentManager &_ecm)
@@ -197,22 +196,25 @@ namespace mazegen
     if (!initialized_)
       return;
 
+    // Maximum ticks to wait for a model to appear in the ECM after /create.
     constexpr unsigned kMaxPollTicks = 100;
 
-    for (MazeInstance &inst : mazes_)
+    for (auto &instUp : mazes_)
     {
+      MazeInstance &inst = *instUp;
+
       if (inst.done || inst.pendingSdfFile.empty())
         continue;
 
       if (!inst.requested)
       {
+        // Issue the /create service call (blocks for up to 5 s).
         ignition::msgs::EntityFactory req;
         req.set_sdf_filename(inst.pendingSdfFile);
         ignition::msgs::Boolean rep;
         bool ok = false;
 
-        const bool called =
-            node_.Request(inst.createService, req, 5000, rep, ok);
+        const bool called = node_.Request(inst.createService, req, 5000, rep, ok);
         if (!called || !ok || !rep.data())
         {
           ignerr << "MazegenPlugin [" << inst.modelName
@@ -224,9 +226,10 @@ namespace mazegen
           continue;
         }
         inst.requested = true;
-        continue; // wait at least one more tick before checking ECM
+        continue; // allow at least one tick before polling the ECM
       }
 
+      // Poll the ECM for the model name to confirm the entity was created.
       bool found = false;
       _ecm.Each<ignition::gazebo::components::Name>(
           [&](const ignition::gazebo::Entity &,
@@ -235,7 +238,7 @@ namespace mazegen
             if (_name->Data() == inst.modelName)
             {
               found = true;
-              return false;
+              return false; // stop iteration
             }
             return true;
           });
